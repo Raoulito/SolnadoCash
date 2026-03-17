@@ -45,7 +45,7 @@
 - [x] T32 — Write sdk/src/proof.ts (generateWithdrawProof — uses snarkjs + WASM from circuits build)
 - [x] T33 — Write sdk/src/stealth.ts (generateStealthAddress)
 - [x] T34 — Write sdk/src/fees.ts (getFeeQuote, computeTreasuryFee, computeMinUserReceives)
-- [ ] T35 — End-to-end SDK test: generateNote → deposit on devnet → generateProof → withdraw via relayer
+- [x] T35 — End-to-end SDK test: generateNote → deposit on devnet → generateProof → withdraw via relayer
 
 ## Phase 5 — React Frontend
 
