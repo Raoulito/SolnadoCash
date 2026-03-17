@@ -1,0 +1,21 @@
+{
+  "name": "@solnadocash/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "npx tsx node_modules/.bin/mocha 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "mocha": "^10.7.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.5.0"
+  }
+}
