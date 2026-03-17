@@ -1,0 +1,19 @@
+{
+  "name": "solnadocash-circuits",
+  "version": "1.0.0",
+  "description": "ZK circuits for SolnadoCash privacy protocol",
+  "scripts": {
+    "compile": "mkdir -p build && circom withdraw/withdraw.circom --r1cs --wasm --sym -o build/ -l node_modules && circom deposit/deposit.circom --r1cs --wasm --sym -o build/ -l node_modules && echo 'Withdraw constraints:' && snarkjs r1cs info build/withdraw.r1cs && echo 'Deposit constraints:' && snarkjs r1cs info build/deposit.r1cs",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest test/ --testTimeout=120000",
+    "generate-zeros": "node ../scripts/generate_zeros.js"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.3"
+  },
+  "devDependencies": {
+    "ffjavascript": "^0.3.0",
+    "jest": "^29.7.0"
+  }
+}

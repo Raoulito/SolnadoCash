@@ -1,0 +1,27 @@
+[package]
+name = "solnadocash"
+version = "0.1.0"
+description = "SolnadoCash privacy protocol — Groth16 ZK proofs + stealth addresses on Solana"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "solnadocash"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+# Enable to run CU benchmarks (T11, T12)
+benchmark = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang    = "0.32.1"
+groth16-solana = "0.0.3"
+solana-program = "1.18.26"
+bytemuck       = { version = "1", features = ["derive"] }
+
+[dev-dependencies]

@@ -1,0 +1,48 @@
+# ── Build artifacts ──────────────────────────────────────────────────────────
+target/
+dist/
+
+# ── Node dependencies ────────────────────────────────────────────────────────
+node_modules/
+
+# ── Anchor local test ledger ─────────────────────────────────────────────────
+.anchor/
+
+# ── ZK circuit build artifacts (large binaries, regenerable) ─────────────────
+circuits/build/
+
+# ── Project documentation (private) ──────────────────────────────────────────
+CLAUDE.md
+PROJET_enhanced.md
+PROJET.md
+TASKS.md
+
+# ── Environment and secrets ──────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+
+# ── Claude Code local settings ──────────────────────────────────────────────
+.claude/
+
+# ── OS and IDE ───────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ── TypeScript build info ────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Temporary files ──────────────────────────────────────────────────────────
+tmp/
+temp/
+scripts/verify_devnet.*

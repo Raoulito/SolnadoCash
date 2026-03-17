@@ -1,0 +1,7 @@
+node_modules/
+build/
+*.r1cs
+*.sym
+*_js/
+*.zkey
+*.ptau
