@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-zinc-100 antialiased;
+  }
+}
+
+/* Wallet adapter button overrides */
+.wallet-adapter-button {
+  border-radius: 0.75rem !important;
+  font-weight: 500 !important;
+  font-size: 0.875rem !important;
+  height: 2.75rem !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  background-color: rgb(24 24 27) !important;
+  border: 1px solid rgb(39 39 42) !important;
+  border-radius: 1rem !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background-color: rgb(39 39 42) !important;
+}
+
+.wallet-adapter-modal-list li {
+  border-radius: 0.75rem !important;
+}
