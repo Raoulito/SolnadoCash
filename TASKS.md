@@ -49,13 +49,13 @@
 
 ## Phase 5 — React Frontend
 
-- [ ] T36 — Scaffold app/ with Vite + React + Tailwind + @solana/wallet-adapter
-- [ ] T37 — Write Onboarding.tsx (3 concrete transparency examples, per Section 5)
-- [ ] T38 — Write Deposit.tsx (3-click flow: connect wallet → choose pool → confirm → show secret note)
-- [ ] T39 — Write progress indicator component (named steps + countdown timer — Elusiv mistake #5)
-- [ ] T40 — Write Withdraw.tsx (3-click flow: paste note → enter recipient → confirm)
-- [ ] T41 — Integrate SDK into frontend — real proof generation with progress callback
-- [ ] T42 — Pool saturation routing: query next_index before deposit, auto-route to V2 if >= 950k (BF-11)
+- [x] T36 — Scaffold app/ with Vite + React + Tailwind + @solana/wallet-adapter
+- [x] T37 — Write Onboarding.tsx (3 concrete transparency examples, per Section 5)
+- [x] T38 — Write Deposit.tsx (3-click flow: connect wallet → choose pool → confirm → show secret note)
+- [x] T39 — Write progress indicator component (named steps + countdown timer — Elusiv mistake #5)
+- [x] T40 — Write Withdraw.tsx (3-click flow: paste note → enter recipient → confirm)
+- [x] T41 — Integrate SDK into frontend — real proof generation with progress callback
+- [x] T42 — Pool saturation routing: query next_index before deposit, auto-route to V2 if >= 950k (BF-11)
 - [ ] T43 — User testing: complete deposit + withdrawal on devnet without reading any documentation
 
 ## Phase 6 — Testnet + Launch
