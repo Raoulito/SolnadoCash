@@ -142,12 +142,24 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
       setError(null);
 
       try {
-        // Generate a random secret note
-        // TODO(T41): Replace with SDK generateNote() + real deposit instruction
+        // ┌──────────────────────────────────────────────────────────────────┐
+        // │ PLACEHOLDER — Remove this entire block for production.          │
+        // │ Replace with:                                                   │
+        // │   import { generateNote } from '@solnadocash/sdk';              │
+        // │   const note = generateNote(pool.denominationLamports, poolPDA);│
+        // │   const commitment = poseidonHash(note.nullifier, note.secret,  │
+        // │                                   note.denomination);           │
+        // │   // Then call the real deposit instruction with `commitment`   │
+        // │ The SDK generateNote() produces a proper sndo_ note with the   │
+        // │ real pool PDA address (from pool.address in config.ts).         │
+        // │ pool.address MUST be set to the deployed Pool PDA before launch.│
+        // └──────────────────────────────────────────────────────────────────┘
         const nullifier = crypto.getRandomValues(new Uint8Array(32));
         const secret = crypto.getRandomValues(new Uint8Array(32));
         const noteHex =
           'sndo_' +
+          // FIXME(production): use pool.address once Pool PDAs are deployed.
+          // Falls back to PROGRAM_ID so the note contains a valid base58 key.
           (pool.address || PROGRAM_ID) +
           '_' +
           pool.denominationLamports.toString(16).padStart(16, '0') +
@@ -155,7 +167,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           Array.from(nullifier, (b) => b.toString(16).padStart(2, '0')).join('') +
           Array.from(secret, (b) => b.toString(16).padStart(2, '0')).join('');
 
-        // Placeholder: send SOL transfer — real deposit instruction via SDK in T41
+        // PLACEHOLDER: send a plain SOL transfer — real deposit instruction via SDK
         const tx = new Transaction().add(
           SystemProgram.transfer({
             fromPubkey: publicKey,

@@ -62,7 +62,20 @@ export default function Withdraw() {
     setProgressError(null);
 
     try {
-      // Step 0: Generate proof (placeholder — T41 will wire real SDK)
+      // ┌──────────────────────────────────────────────────────────────────┐
+      // │ PLACEHOLDER — Remove this entire block for production.          │
+      // │ Replace with:                                                   │
+      // │   import { decodeNote, generateWithdrawProof, ... } from SDK;   │
+      // │   const note = decodeNote(parsedNote.raw);                      │
+      // │   const quote = await getFeeQuote(RELAYER_URL, note.poolAddress)│
+      // │   const { proof, publicSignals } = await generateWithdrawProof( │
+      // │     note, quote, recipient, merkleTree, circuitPaths);          │
+      // │   // Then submit real proof + publicSignals to relayer           │
+      // │ The dummy proof/signals below will be rejected by the on-chain  │
+      // │ program — they only test the relayer communication path.        │
+      // └──────────────────────────────────────────────────────────────────┘
+
+      // Step 0: Generate proof (placeholder — simulates ~2s proof gen)
       await new Promise((r) => setTimeout(r, 2000));
       setProgressStep(1);
 
@@ -71,6 +84,7 @@ export default function Withdraw() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // FIXME(production): use real Groth16 proof from SDK
           proof: { pi_a: [], pi_b: [], pi_c: [], protocol: 'groth16', curve: 'bn128' },
           publicSignals: ['0', '0', '0'],
           poolAddress: parsedNote?.poolHint || '',
