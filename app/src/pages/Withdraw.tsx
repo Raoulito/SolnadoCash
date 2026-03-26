@@ -119,7 +119,7 @@ export default function Withdraw() {
       } else if (msg.includes('NullifierSpent')) {
         setProgressError('This note has already been used. Each note can only be withdrawn once.');
       } else if (msg.includes('InvalidProof')) {
-        setProgressError('The proof could not be verified. Please try again.');
+        setProgressError('Proof verification failed. This is expected in demo mode — real proof generation requires the SDK integration.');
       } else if (msg.includes('RelayerBusy')) {
         setProgressError('The relayer is busy. Please wait a moment and try again.');
       } else {

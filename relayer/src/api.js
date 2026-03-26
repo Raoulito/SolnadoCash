@@ -150,7 +150,13 @@ export function createApp({ connection, relayerKeypair, programId }) {
       }
 
       // T26 — Off-chain proof verification
-      const valid = await verifyProofOffChain(proof, publicSignals);
+      let valid;
+      try {
+        valid = await verifyProofOffChain(proof, publicSignals);
+      } catch (verifyErr) {
+        console.error("[submit_proof] Proof verification failed to parse:", verifyErr.message);
+        return res.status(400).json({ error: "InvalidProof", message: "Malformed proof data" });
+      }
       if (!valid) {
         return res.status(400).json({ error: "InvalidProof" });
       }
