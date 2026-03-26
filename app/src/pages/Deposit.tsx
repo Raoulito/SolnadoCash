@@ -8,9 +8,13 @@ import { usePoolInfo } from '../hooks/usePool';
 import type { PoolConfig } from '../config';
 import { PROGRAM_ID } from '../config';
 
-type Step = 'select' | 'confirm' | 'processing' | 'note';
+type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
-export default function Deposit() {
+interface DepositProps {
+  onGoToWithdraw: () => void;
+}
+
+export default function Deposit({ onGoToWithdraw }: DepositProps) {
   const { connected, publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
 
@@ -261,13 +265,67 @@ export default function Deposit() {
 
       <NoteDisplay
         note={secretNote}
-        onDone={() => {
-          setStep('select');
-          setPool(null);
-          setSecretNote('');
-          setTxSig(null);
-        }}
+        onDone={() => setStep('next')}
       />
     </div>
   );
+
+  // Step 4: What's next
+  if (step === 'next') {
+    return (
+      <div className="space-y-5">
+        <div className="text-center">
+          <span className="text-3xl mb-2 block">&#10003;</span>
+          <h2 className="text-lg font-semibold text-green-400 mb-2">
+            You're all set!
+          </h2>
+        </div>
+
+        <div className="bg-zinc-800/50 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-zinc-200">What happens next?</h3>
+          <div className="space-y-3">
+            <div className="flex gap-3">
+              <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
+              <p className="text-zinc-400 text-sm">
+                Your SOL is now in the privacy pool. <strong className="text-zinc-300">Nobody</strong> can link it to you.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+              <p className="text-zinc-400 text-sm">
+                When you're ready, go to <strong className="text-zinc-300">Withdraw</strong> and paste your secret note.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+              <p className="text-zinc-400 text-sm">
+                Enter <strong className="text-zinc-300">any</strong> wallet address as recipient — no link, no trace.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onGoToWithdraw}
+          className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
+        >
+          Go to Withdraw
+        </button>
+
+        <button
+          onClick={() => {
+            setStep('select');
+            setPool(null);
+            setSecretNote('');
+            setTxSig(null);
+          }}
+          className="w-full py-2.5 text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+        >
+          Make another deposit
+        </button>
+      </div>
+    );
+  }
+
+  return null;
 }

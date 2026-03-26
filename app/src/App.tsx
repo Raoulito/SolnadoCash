@@ -63,7 +63,11 @@ export default function App() {
 
           {/* Card */}
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800/50 p-6">
-            {tab === 'deposit' ? <Deposit /> : <Withdraw />}
+            {tab === 'deposit' ? (
+              <Deposit onGoToWithdraw={() => setTab('withdraw')} />
+            ) : (
+              <Withdraw />
+            )}
           </div>
 
           {/* Footer */}

@@ -226,7 +226,16 @@ export default function Withdraw() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Withdrawal failed';
         if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-          setProgressError('Could not reach the relayer. Is it running?');
+          setProgressError(
+            'Could not reach the relayer service. Make sure it is running:\n' +
+            'cd relayer && npm start'
+          );
+        } else if (msg.includes('NullifierSpent')) {
+          setProgressError('This note has already been used. Each note can only be withdrawn once.');
+        } else if (msg.includes('InvalidProof')) {
+          setProgressError('The proof could not be verified. Please try again.');
+        } else if (msg.includes('RelayerBusy')) {
+          setProgressError('The relayer is busy. Please wait a moment and try again.');
         } else {
           setProgressError(msg);
         }
@@ -301,16 +310,27 @@ export default function Withdraw() {
         />
 
         {progressError && (
-          <button
-            onClick={() => {
-              setStep('confirm');
-              setProgressError(null);
-              setProgressStep(-1);
-            }}
-            className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
-          >
-            Try again
-          </button>
+          <div className="space-y-3">
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+              {progressError.split('\n').map((line, i) => (
+                <p key={i} className={`text-sm ${
+                  i === 0 ? 'text-red-400' : 'text-red-400/70 font-mono text-xs mt-2'
+                }`}>
+                  {line}
+                </p>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                setStep('confirm');
+                setProgressError(null);
+                setProgressStep(-1);
+              }}
+              className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
+            >
+              Try again
+            </button>
+          </div>
         )}
       </div>
     );
