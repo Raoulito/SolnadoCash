@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { NETWORK } from './config';
 import Onboarding from './pages/Onboarding';
@@ -13,6 +13,7 @@ const ONBOARDING_KEY = 'solnadocash_onboarded';
 export default function App() {
   const [tab, setTab] = useState<Tab>('deposit');
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [noteLocked, setNoteLocked] = useState(false);
 
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDING_KEY)) {
@@ -24,6 +25,15 @@ export default function App() {
     localStorage.setItem(ONBOARDING_KEY, '1');
     setShowOnboarding(false);
   };
+
+  const handleTabClick = (t: Tab) => {
+    if (noteLocked) return; // Block navigation while note is displayed
+    setTab(t);
+  };
+
+  const handleNoteLock = useCallback((locked: boolean) => {
+    setNoteLocked(locked);
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -49,11 +59,13 @@ export default function App() {
             {(['deposit', 'withdraw'] as Tab[]).map((t) => (
               <button
                 key={t}
-                onClick={() => setTab(t)}
+                onClick={() => handleTabClick(t)}
                 className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors capitalize ${
                   tab === t
                     ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                    : 'text-zinc-500 hover:text-zinc-300'
+                    : noteLocked
+                      ? 'text-zinc-700 cursor-not-allowed'
+                      : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
                 {t}
@@ -61,10 +73,22 @@ export default function App() {
             ))}
           </div>
 
+          {/* Lock banner */}
+          {noteLocked && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 mb-4">
+              <p className="text-amber-400 text-xs text-center">
+                Save your secret note before leaving this page.
+              </p>
+            </div>
+          )}
+
           {/* Card */}
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800/50 p-6">
             {tab === 'deposit' ? (
-              <Deposit onGoToWithdraw={() => setTab('withdraw')} />
+              <Deposit
+                onGoToWithdraw={() => setTab('withdraw')}
+                onNoteLock={handleNoteLock}
+              />
             ) : (
               <Withdraw />
             )}

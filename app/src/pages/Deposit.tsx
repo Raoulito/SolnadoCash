@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
@@ -12,9 +12,10 @@ type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
 interface DepositProps {
   onGoToWithdraw: () => void;
+  onNoteLock: (locked: boolean) => void;
 }
 
-export default function Deposit({ onGoToWithdraw }: DepositProps) {
+export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   const { connected, publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
 
@@ -26,6 +27,11 @@ export default function Deposit({ onGoToWithdraw }: DepositProps) {
 
   // T42: Pool saturation check
   const { info: poolInfo, loading: poolLoading } = usePoolInfo(pool?.address || null);
+
+  // Lock navigation while note is displayed
+  useEffect(() => {
+    onNoteLock(step === 'note');
+  }, [step, onNoteLock]);
 
   // Not connected → show connect button
   if (!connected || !publicKey) {
@@ -243,34 +249,36 @@ export default function Deposit({ onGoToWithdraw }: DepositProps) {
     );
   }
 
-  // Step 3: Show secret note
-  return (
-    <div className="space-y-4">
-      <div className="text-center">
-        <span className="text-3xl mb-2 block">&#10003;</span>
-        <h2 className="text-lg font-semibold text-green-400 mb-1">
-          Deposit successful!
-        </h2>
-        {txSig && (
-          <a
-            href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-cyan-400/70 text-xs hover:text-cyan-400 transition-colors underline"
-          >
-            View transaction
-          </a>
-        )}
+  // Step 3: Show secret note (navigation locked)
+  if (step === 'note') {
+    return (
+      <div className="space-y-4">
+        <div className="text-center">
+          <span className="text-3xl mb-2 block">&#10003;</span>
+          <h2 className="text-lg font-semibold text-green-400 mb-1">
+            Deposit successful!
+          </h2>
+          {txSig && (
+            <a
+              href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-cyan-400/70 text-xs hover:text-cyan-400 transition-colors underline"
+            >
+              View transaction
+            </a>
+          )}
+        </div>
+
+        <NoteDisplay
+          note={secretNote}
+          onDone={() => setStep('next')}
+        />
       </div>
+    );
+  }
 
-      <NoteDisplay
-        note={secretNote}
-        onDone={() => setStep('next')}
-      />
-    </div>
-  );
-
-  // Step 4: What's next
+  // Step 4: What's next (after note confirmed)
   if (step === 'next') {
     return (
       <div className="space-y-5">
