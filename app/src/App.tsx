@@ -4,6 +4,7 @@ import { NETWORK } from './config';
 import Onboarding from './pages/Onboarding';
 import Deposit from './pages/Deposit';
 import Withdraw from './pages/Withdraw';
+import NetworkGuard from './components/NetworkGuard';
 
 type Tab = 'deposit' | 'withdraw';
 
@@ -27,6 +28,9 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       {showOnboarding && <Onboarding onDismiss={dismissOnboarding} />}
+
+      {/* Network warning — shown after wallet connect */}
+      <NetworkGuard />
 
       {/* Header */}
       <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-zinc-800/50">
