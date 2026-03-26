@@ -100,6 +100,8 @@ export default function Withdraw() {
           'Could not reach the relayer service. Make sure it is running:\n' +
           'cd relayer && npm start'
         );
+      } else if (msg.includes('InvalidAddress')) {
+        setProgressError('Invalid address in note or recipient. The note may have been generated with an older format — try a new deposit.');
       } else if (msg.includes('NullifierSpent')) {
         setProgressError('This note has already been used. Each note can only be withdrawn once.');
       } else if (msg.includes('InvalidProof')) {

@@ -148,7 +148,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         const secret = crypto.getRandomValues(new Uint8Array(32));
         const noteHex =
           'sndo_' +
-          (pool.address || publicKey.toBase58().slice(0, 8)) +
+          (pool.address || PROGRAM_ID) +
           '_' +
           pool.denominationLamports.toString(16).padStart(16, '0') +
           '_' +
