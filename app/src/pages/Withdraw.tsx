@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndicator';
-import { RELAYER_URL, POOLS } from '../config';
+import { RELAYER_URL } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
 
@@ -54,6 +54,63 @@ export default function Withdraw() {
   const [progressError, setProgressError] = useState<string | null>(null);
   const [txSig, setTxSig] = useState<string | null>(null);
   const [feeTaken, setFeeTaken] = useState<string | null>(null);
+
+  // Withdrawal logic — lifted out so it can be called from confirm AND retry
+  const executeWithdraw = useCallback(async () => {
+    setStep('progress');
+    setProgressStep(0);
+    setProgressError(null);
+
+    try {
+      // Step 0: Generate proof (placeholder — T41 will wire real SDK)
+      await new Promise((r) => setTimeout(r, 2000));
+      setProgressStep(1);
+
+      // Step 1: Submit to relayer
+      const res = await fetch(`${RELAYER_URL}/submit_proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proof: { pi_a: [], pi_b: [], pi_c: [], protocol: 'groth16', curve: 'bn128' },
+          publicSignals: ['0', '0', '0'],
+          poolAddress: parsedNote?.poolHint || '',
+          recipient,
+          relayerFeeMax: '50000',
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(body.error || `Relayer error (${res.status})`);
+      }
+
+      const data = await res.json();
+      setProgressStep(2);
+
+      // Step 2: Wait for on-chain confirmation
+      await new Promise((r) => setTimeout(r, 1500));
+
+      setTxSig(data.txSignature || null);
+      setFeeTaken(data.feeTaken || null);
+      setStep('done');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Withdrawal failed';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setProgressError(
+          'Could not reach the relayer service. Make sure it is running:\n' +
+          'cd relayer && npm start'
+        );
+      } else if (msg.includes('NullifierSpent')) {
+        setProgressError('This note has already been used. Each note can only be withdrawn once.');
+      } else if (msg.includes('InvalidProof')) {
+        setProgressError('The proof could not be verified. Please try again.');
+      } else if (msg.includes('RelayerBusy')) {
+        setProgressError('The relayer is busy. Please wait a moment and try again.');
+      } else {
+        setProgressError(msg);
+      }
+    }
+  }, [parsedNote, recipient]);
 
   // Step 1: Paste note
   if (step === 'paste') {
@@ -182,65 +239,9 @@ export default function Withdraw() {
     );
   }
 
-  // Step 3: Confirm & start withdrawal
+  // Step 3: Confirm
   if (step === 'confirm') {
     const treasuryFee = parsedNote ? parsedNote.denominationSol / 500 : 0;
-
-    const handleWithdraw = async () => {
-      setStep('progress');
-      setProgressStep(0);
-      setProgressError(null);
-
-      try {
-        // Step 0: Generate proof (placeholder — T41 will wire real SDK)
-        await new Promise((r) => setTimeout(r, 2000));
-        setProgressStep(1);
-
-        // Step 1: Submit to relayer
-        const res = await fetch(`${RELAYER_URL}/submit_proof`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            proof: { pi_a: [], pi_b: [], pi_c: [], protocol: 'groth16', curve: 'bn128' },
-            publicSignals: ['0', '0', '0'],
-            poolAddress: parsedNote?.poolHint || '',
-            recipient,
-            relayerFeeMax: '50000',
-          }),
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(body.error || `Relayer error (${res.status})`);
-        }
-
-        const data = await res.json();
-        setProgressStep(2);
-
-        // Step 2: Wait for on-chain confirmation
-        await new Promise((r) => setTimeout(r, 1500));
-
-        setTxSig(data.txSignature || null);
-        setFeeTaken(data.feeTaken || null);
-        setStep('done');
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Withdrawal failed';
-        if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-          setProgressError(
-            'Could not reach the relayer service. Make sure it is running:\n' +
-            'cd relayer && npm start'
-          );
-        } else if (msg.includes('NullifierSpent')) {
-          setProgressError('This note has already been used. Each note can only be withdrawn once.');
-        } else if (msg.includes('InvalidProof')) {
-          setProgressError('The proof could not be verified. Please try again.');
-        } else if (msg.includes('RelayerBusy')) {
-          setProgressError('The relayer is busy. Please wait a moment and try again.');
-        } else {
-          setProgressError(msg);
-        }
-      }
-    };
 
     return (
       <div className="space-y-6">
@@ -283,7 +284,7 @@ export default function Withdraw() {
         </div>
 
         <button
-          onClick={handleWithdraw}
+          onClick={executeWithdraw}
           className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
         >
           Withdraw
@@ -320,15 +321,37 @@ export default function Withdraw() {
                 </p>
               ))}
             </div>
+
+            {/* Summary of what will be retried */}
+            <div className="bg-zinc-800/50 rounded-xl p-3 space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Amount</span>
+                <span className="text-zinc-400">{parsedNote?.denominationSol} SOL</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Recipient</span>
+                <span className="text-zinc-400 font-mono">
+                  {recipient.slice(0, 4)}...{recipient.slice(-4)}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={executeWithdraw}
+              className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-xl transition-colors text-sm"
+            >
+              Retry withdrawal
+            </button>
+
             <button
               onClick={() => {
                 setStep('confirm');
                 setProgressError(null);
                 setProgressStep(-1);
               }}
-              className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
+              className="w-full py-2.5 text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
             >
-              Try again
+              Back to details
             </button>
           </div>
         )}
@@ -337,63 +360,67 @@ export default function Withdraw() {
   }
 
   // Done
-  return (
-    <div className="space-y-6 text-center py-4">
-      <div>
-        <span className="text-4xl mb-3 block text-green-400">&#10003;</span>
-        <h2 className="text-lg font-semibold text-green-400 mb-1">
-          Withdrawal complete!
-        </h2>
-        <p className="text-zinc-400 text-sm">
-          Funds have been sent to the recipient address.
-        </p>
-      </div>
+  if (step === 'done') {
+    return (
+      <div className="space-y-6 text-center py-4">
+        <div>
+          <span className="text-4xl mb-3 block text-green-400">&#10003;</span>
+          <h2 className="text-lg font-semibold text-green-400 mb-1">
+            Withdrawal complete!
+          </h2>
+          <p className="text-zinc-400 text-sm">
+            Funds have been sent to the recipient address.
+          </p>
+        </div>
 
-      <div className="bg-zinc-800/50 rounded-xl p-5 space-y-2 text-left">
-        <div className="flex justify-between text-sm">
-          <span className="text-zinc-400">Recipient</span>
-          <span className="text-zinc-300 font-mono text-xs">
-            {recipient.slice(0, 4)}...{recipient.slice(-4)}
-          </span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-zinc-400">Amount</span>
-          <span className="text-zinc-200">{parsedNote?.denominationSol} SOL</span>
-        </div>
-        {feeTaken && (
+        <div className="bg-zinc-800/50 rounded-xl p-5 space-y-2 text-left">
           <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">Relayer fee</span>
-            <span className="text-zinc-300">
-              {(Number(feeTaken) / 1e9).toFixed(6)} SOL
+            <span className="text-zinc-400">Recipient</span>
+            <span className="text-zinc-300 font-mono text-xs">
+              {recipient.slice(0, 4)}...{recipient.slice(-4)}
             </span>
           </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-zinc-400">Amount</span>
+            <span className="text-zinc-200">{parsedNote?.denominationSol} SOL</span>
+          </div>
+          {feeTaken && (
+            <div className="flex justify-between text-sm">
+              <span className="text-zinc-400">Relayer fee</span>
+              <span className="text-zinc-300">
+                {(Number(feeTaken) / 1e9).toFixed(6)} SOL
+              </span>
+            </div>
+          )}
+        </div>
+
+        {txSig && (
+          <a
+            href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-cyan-400 text-sm hover:text-cyan-300 transition-colors underline"
+          >
+            View on Solana Explorer
+          </a>
         )}
-      </div>
 
-      {txSig && (
-        <a
-          href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block text-cyan-400 text-sm hover:text-cyan-300 transition-colors underline"
+        <button
+          onClick={() => {
+            setStep('paste');
+            setNoteInput('');
+            setParsedNote(null);
+            setRecipient('');
+            setTxSig(null);
+            setFeeTaken(null);
+          }}
+          className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
         >
-          View on Solana Explorer
-        </a>
-      )}
+          New withdrawal
+        </button>
+      </div>
+    );
+  }
 
-      <button
-        onClick={() => {
-          setStep('paste');
-          setNoteInput('');
-          setParsedNote(null);
-          setRecipient('');
-          setTxSig(null);
-          setFeeTaken(null);
-        }}
-        className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
-      >
-        New withdrawal
-      </button>
-    </div>
-  );
+  return null;
 }
