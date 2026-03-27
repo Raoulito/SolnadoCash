@@ -55,7 +55,7 @@ export async function getFeeQuote(
     );
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as Record<string, string>;
 
   const quote: FeeQuote = {
     relayerAddress: new PublicKey(data.relayerAddress),

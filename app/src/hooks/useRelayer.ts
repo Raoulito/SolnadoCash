@@ -33,8 +33,14 @@ export async function submitProof(params: {
     body: JSON.stringify(params),
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(body.error || `Relayer returned ${res.status}`);
+    const body = await res.json().catch(() => ({ error: 'Unknown error' })) as Record<string, unknown>;
+    const code = body.error as string || `HTTP ${res.status}`;
+    const detail = body.message as string || '';
+    const logs = body.logs as string[] | undefined;
+    // Include both error code and detail so the UI can show actionable info
+    const parts = [code, detail].filter(Boolean);
+    if (logs?.length) parts.push('Logs: ' + logs.join(' | '));
+    throw new Error(parts.join(': '));
   }
   return res.json();
 }

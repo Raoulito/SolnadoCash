@@ -1,34 +1,47 @@
 import { useState, useCallback } from 'react';
+import { useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
+import {
+  decodeNote,
+  initPoseidon,
+  generateWithdrawProof,
+  type SecretNote,
+  type FeeQuote,
+} from '@solnadocash/sdk';
 import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndicator';
+import { rebuildMerkleTree } from '../utils/merkle';
+import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
 import { RELAYER_URL } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
 
 const PROGRESS_STEPS: ProgressStep[] = [
-  { label: 'Generating proof', estimatedSeconds: 15 },
-  { label: 'Submitting to relayer', estimatedSeconds: 5 },
-  { label: 'Confirming on-chain', estimatedSeconds: 10 },
+  { label: 'Fetching fee quote & Merkle tree', estimatedSeconds: 10 },
+  { label: 'Generating ZK proof', estimatedSeconds: 30 },
+  { label: 'Submitting to relayer', estimatedSeconds: 10 },
 ];
+
+const CIRCUIT_PATHS = {
+  wasmPath: '/circuits/withdraw.wasm',
+  zkeyPath: '/circuits/withdraw_final.zkey',
+};
 
 interface ParsedNote {
   raw: string;
-  poolHint: string;
+  poolAddress: string;
   denominationLamports: bigint;
   denominationSol: number;
 }
 
 function parseNote(raw: string): ParsedNote | null {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith('sndo_')) return null;
-  const parts = trimmed.split('_');
-  if (parts.length < 4) return null;
   try {
-    const poolHint = parts[1];
-    const denomHex = parts[2];
-    const denominationLamports = BigInt('0x' + denomHex);
-    const denominationSol = Number(denominationLamports) / 1e9;
-    return { raw: trimmed, poolHint, denominationLamports, denominationSol };
+    const note = decodeNote(raw.trim());
+    return {
+      raw: note.encoded,
+      poolAddress: note.poolAddress.toBase58(),
+      denominationLamports: note.denomination,
+      denominationSol: Number(note.denomination) / 1e9,
+    };
   } catch {
     return null;
   }
@@ -44,6 +57,8 @@ function isValidSolanaAddress(addr: string): boolean {
 }
 
 export default function Withdraw() {
+  const { connection } = useConnection();
+
   const [step, setStep] = useState<Step>('paste');
   const [noteInput, setNoteInput] = useState('');
   const [parsedNote, setParsedNote] = useState<ParsedNote | null>(null);
@@ -57,83 +72,129 @@ export default function Withdraw() {
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   const executeWithdraw = useCallback(async () => {
+    if (!parsedNote) return;
+
     setStep('progress');
     setProgressStep(0);
     setProgressError(null);
 
     try {
-      // ┌──────────────────────────────────────────────────────────────────┐
-      // │ PLACEHOLDER — Remove this entire block for production.          │
-      // │ Replace with:                                                   │
-      // │   import { decodeNote, generateWithdrawProof, ... } from SDK;   │
-      // │   const note = decodeNote(parsedNote.raw);                      │
-      // │   const quote = await getFeeQuote(RELAYER_URL, note.poolAddress)│
-      // │   const { proof, publicSignals } = await generateWithdrawProof( │
-      // │     note, quote, recipient, merkleTree, circuitPaths);          │
-      // │   // Then submit real proof + publicSignals to relayer           │
-      // │ The dummy proof/signals below will be rejected by the on-chain  │
-      // │ program — they only test the relayer communication path.        │
-      // └──────────────────────────────────────────────────────────────────┘
+      // Decode the full note with SDK (validates all fields)
+      const note: SecretNote = decodeNote(parsedNote.raw);
+      const poolPubkey = note.poolAddress;
 
-      // Step 0: Generate proof (placeholder — simulates ~2s proof gen)
-      await new Promise((r) => setTimeout(r, 2000));
+      // Step 0: Fetch fee quote + rebuild Merkle tree in parallel
+      await initPoseidon();
+
+      const [feeQuoteRaw, merkleTree] = await Promise.all([
+        fetchFeeQuote(poolPubkey.toBase58()),
+        rebuildMerkleTree(connection, poolPubkey),
+      ]);
+
+      // Convert relayer fee quote to SDK FeeQuote format
+      const feeQuote: FeeQuote = {
+        relayerAddress: new PublicKey(feeQuoteRaw.relayerAddress),
+        relayerFeeMax: BigInt(feeQuoteRaw.relayerFeeMax),
+        validUntil: feeQuoteRaw.validUntil,
+        estimatedUserReceives: BigInt(feeQuoteRaw.estimatedUserReceives),
+      };
+
+      // Step 1: Generate ZK proof (CPU-intensive, ~15-60s)
       setProgressStep(1);
 
-      // Step 1: Submit to relayer
-      const res = await fetch(`${RELAYER_URL}/submit_proof`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // FIXME(production): use real Groth16 proof from SDK
-          proof: { pi_a: [], pi_b: [], pi_c: [], protocol: 'groth16', curve: 'bn128' },
-          publicSignals: ['0', '0', '0'],
-          poolAddress: parsedNote?.poolHint || '',
-          recipient,
-          relayerFeeMax: '50000',
-        }),
-      });
+      const { proof, publicSignals } = await generateWithdrawProof(
+        note,
+        feeQuote,
+        new PublicKey(recipient),
+        merkleTree,
+        CIRCUIT_PATHS
+      );
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(body.error || `Relayer error (${res.status})`);
-      }
-
-      const data = await res.json();
+      // Step 2: Submit to relayer
       setProgressStep(2);
 
-      // Step 2: Wait for on-chain confirmation
-      await new Promise((r) => setTimeout(r, 1500));
+      const result = await submitProof({
+        proof: proof,
+        publicSignals: publicSignals.map((s) => s.toString()),
+        poolAddress: poolPubkey.toBase58(),
+        recipient,
+        relayerFeeMax: feeQuoteRaw.relayerFeeMax,
+      });
 
-      setTxSig(data.txSignature || null);
-      setFeeTaken(data.feeTaken || null);
+      setTxSig(result.txSignature || null);
+      setFeeTaken(result.feeTaken || null);
       setStep('done');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Withdrawal failed';
+
+      // Network / relayer unreachable
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
         setProgressError(
           'Could not reach the relayer service. Make sure it is running:\n' +
           'cd relayer && npm start'
         );
-      } else if (msg.includes('InvalidAddress')) {
-        setProgressError('Invalid address in note or recipient. The note may have been generated with an older format — try a new deposit.');
+      }
+      // Fee quote failure
+      else if (msg.includes('fee_quote') || msg.includes('Fee quote')) {
+        setProgressError('Could not get a fee quote from the relayer. Make sure it is running.');
+      }
+      // Merkle tree / commitment errors
+      else if (msg.includes('Commitment not found')) {
+        setProgressError(
+          'Your deposit was not found in the Merkle tree. ' +
+          'This can happen if the pool address in the note doesn\'t match a deployed pool, ' +
+          'or if the deposit transaction hasn\'t been confirmed yet.'
+        );
+      }
+      // On-chain program errors (mapped by relayer)
+      else if (msg.includes('InvalidAddress')) {
+        setProgressError('Invalid address in note or recipient.');
       } else if (msg.includes('NullifierSpent')) {
         setProgressError('This note has already been used. Each note can only be withdrawn once.');
       } else if (msg.includes('InvalidProof')) {
-        setProgressError('Proof verification failed. This is expected in demo mode — real proof generation requires the SDK integration.');
-      } else if (msg.includes('RelayerBusy')) {
+        setProgressError('Proof verification failed. The Merkle tree may be out of sync — try again.');
+      } else if (msg.includes('StaleRoot') || msg.includes('RootNotFound')) {
+        setProgressError(
+          'The Merkle root is no longer in the pool\'s history. ' +
+          'New deposits may have rotated it out. Try again to use the latest state.'
+        );
+      } else if (msg.includes('InvalidWithdrawalCommitment')) {
+        setProgressError('Withdrawal commitment mismatch. The relayer address or fee may have changed — try again.');
+      } else if (msg.includes('RelayerFeeExceedsMax')) {
+        setProgressError('The relayer fee exceeds the maximum agreed in the proof. Try again with a fresh fee quote.');
+      } else if (msg.includes('FeeInvariantViolated')) {
+        setProgressError('Fee invariant check failed on-chain. This is a bug — please report it.');
+      } else if (msg.includes('PoolPaused')) {
+        setProgressError('This pool is currently paused by the admin. Withdrawals are temporarily disabled.');
+      }
+      // Relayer operational errors
+      else if (msg.includes('RelayerInsufficientFunds')) {
+        setProgressError('The relayer wallet has insufficient SOL to submit the transaction. Contact the operator.');
+      } else if (msg.includes('BlockhashExpired')) {
+        setProgressError('Transaction expired before confirmation. Try again.');
+      } else if (msg.includes('AccountNotFound')) {
+        setProgressError('A required on-chain account was not found. The pool may not be deployed.');
+      } else if (msg.includes('SimulationFailed')) {
+        setProgressError('Transaction simulation failed on-chain.\n' + msg);
+      } else if (msg.includes('RelayerBusy') || msg.includes('TooManyRequests')) {
         setProgressError('The relayer is busy. Please wait a moment and try again.');
-      } else {
+      }
+      // Fallback — show the raw message
+      else {
         setProgressError(msg);
       }
     }
-  }, [parsedNote, recipient]);
+  }, [parsedNote, recipient, connection]);
 
   // Step 1: Paste note
   if (step === 'paste') {
     const handleNext = () => {
       const parsed = parseNote(noteInput);
       if (!parsed) {
-        setNoteError('Invalid note. It should start with "sndo_" and contain your deposit data.');
+        setNoteError(
+          'Invalid note. It should start with "sndo_" and contain your deposit data ' +
+          '(pool address, denomination, nullifier, and secret).'
+        );
         return;
       }
       setParsedNote(parsed);
@@ -299,6 +360,13 @@ export default function Withdraw() {
           </div>
         </div>
 
+        <div className="bg-zinc-800/30 rounded-xl p-4">
+          <p className="text-zinc-500 text-xs leading-relaxed">
+            Proof generation takes <strong className="text-zinc-400">30-60 seconds</strong>.
+            The ZK proof is computed in your browser — your secret note never leaves this device.
+          </p>
+        </div>
+
         <button
           onClick={executeWithdraw}
           className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
@@ -316,7 +384,7 @@ export default function Withdraw() {
         <div>
           <h2 className="text-lg font-semibold mb-1">Withdrawing...</h2>
           <p className="text-zinc-400 text-sm">
-            This may take up to 30 seconds. Do not close this page.
+            This may take up to 60 seconds. Do not close this page.
           </p>
         </div>
 

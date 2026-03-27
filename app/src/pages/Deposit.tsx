@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { useState, useEffect, useCallback } from 'react';
+import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
+import { generateNote, initPoseidon, poseidonHash } from '@solnadocash/sdk';
 import PoolSelector from '../components/PoolSelector';
 import NoteDisplay from '../components/NoteDisplay';
 import { usePoolInfo } from '../hooks/usePool';
+import { getProgram, buildDepositTx } from '../utils/program';
 import type { PoolConfig } from '../config';
-import { PROGRAM_ID } from '../config';
 
 type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
@@ -17,6 +18,7 @@ interface DepositProps {
 
 export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   const { connected, publicKey, sendTransaction } = useWallet();
+  const anchorWallet = useAnchorWallet();
   const { connection } = useConnection();
 
   const [step, setStep] = useState<Step>('select');
@@ -33,7 +35,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
     onNoteLock(step === 'note');
   }, [step, onNoteLock]);
 
-  // Not connected → show connect button
+  // Not connected
   if (!connected || !publicKey) {
     return (
       <div className="text-center py-8">
@@ -49,7 +51,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
   // Step 1: Select pool
   if (step === 'select') {
-    const canContinue = pool && !poolInfo?.isPaused && !poolInfo?.isSaturated;
+    const canContinue = pool && pool.address && !poolInfo?.isPaused && !poolInfo?.isSaturated;
 
     return (
       <div className="space-y-6">
@@ -62,7 +64,19 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <PoolSelector selected={pool} onSelect={setPool} />
 
-        {pool && (
+        {pool && !pool.address && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+            <p className="text-red-400 text-sm font-medium mb-1">
+              Pool not deployed
+            </p>
+            <p className="text-red-400/70 text-xs">
+              This pool has not been initialized on devnet yet. Contact the admin
+              or run the deploy script.
+            </p>
+          </div>
+        )}
+
+        {pool && pool.address && (
           <div className="bg-zinc-800/50 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-zinc-400">Amount</span>
@@ -121,9 +135,9 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             setError(null);
             setStep('confirm');
           }}
-          disabled={!pool || (pool.address ? !canContinue : false)}
+          disabled={!canContinue}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
-            pool && (pool.address ? canContinue : true)
+            canContinue
               ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
               : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
           }`}
@@ -137,57 +151,46 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   // Step 2: Confirm deposit
   if (step === 'confirm') {
     const handleDeposit = async () => {
-      if (!pool || !publicKey) return;
+      if (!pool || !pool.address || !publicKey || !anchorWallet) return;
       setStep('processing');
       setError(null);
 
       try {
-        // ┌──────────────────────────────────────────────────────────────────┐
-        // │ PLACEHOLDER — Remove this entire block for production.          │
-        // │ Replace with:                                                   │
-        // │   import { generateNote } from '@solnadocash/sdk';              │
-        // │   const note = generateNote(pool.denominationLamports, poolPDA);│
-        // │   const commitment = poseidonHash(note.nullifier, note.secret,  │
-        // │                                   note.denomination);           │
-        // │   // Then call the real deposit instruction with `commitment`   │
-        // │ The SDK generateNote() produces a proper sndo_ note with the   │
-        // │ real pool PDA address (from pool.address in config.ts).         │
-        // │ pool.address MUST be set to the deployed Pool PDA before launch.│
-        // └──────────────────────────────────────────────────────────────────┘
-        const nullifier = crypto.getRandomValues(new Uint8Array(32));
-        const secret = crypto.getRandomValues(new Uint8Array(32));
-        const noteHex =
-          'sndo_' +
-          // FIXME(production): use pool.address once Pool PDAs are deployed.
-          // Falls back to PROGRAM_ID so the note contains a valid base58 key.
-          (pool.address || PROGRAM_ID) +
-          '_' +
-          pool.denominationLamports.toString(16).padStart(16, '0') +
-          '_' +
-          Array.from(nullifier, (b) => b.toString(16).padStart(2, '0')).join('') +
-          Array.from(secret, (b) => b.toString(16).padStart(2, '0')).join('');
+        // Initialize Poseidon hash (loads WASM, cached after first call)
+        await initPoseidon();
 
-        // PLACEHOLDER: send a plain SOL transfer — real deposit instruction via SDK
-        const tx = new Transaction().add(
-          SystemProgram.transfer({
-            fromPubkey: publicKey,
-            toPubkey: new PublicKey(PROGRAM_ID),
-            lamports: Number(pool.denominationLamports),
-          })
+        // Generate a real secret note with the SDK
+        const poolPda = new PublicKey(pool.address);
+        const note = generateNote(pool.denominationLamports, poolPda);
+
+        // Compute Poseidon commitment = H(nullifier, secret, denomination)
+        const commitment = poseidonHash(
+          note.nullifier,
+          note.secret,
+          note.denomination
         );
 
+        // Build the real Anchor deposit instruction
+        const program = getProgram(connection, anchorWallet);
+        const tx = await buildDepositTx(program, poolPda, publicKey, commitment);
+
+        // Sign and send via wallet adapter
         const sig = await sendTransaction(tx, connection);
         await connection.confirmTransaction(sig, 'confirmed');
 
         setTxSig(sig);
-        setSecretNote(noteHex);
+        setSecretNote(note.encoded);
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
         if (msg.includes('User rejected')) {
           setError('Transaction cancelled.');
-        } else if (msg.includes('insufficient')) {
+        } else if (msg.includes('insufficient') || msg.includes('not enough')) {
           setError('Not enough SOL in your wallet.');
+        } else if (msg.includes('PoolPaused')) {
+          setError('This pool is currently paused by the admin.');
+        } else if (msg.includes('PoolSaturated') || msg.includes('TreeFull')) {
+          setError('This pool is full. Try a different denomination.');
         } else {
           setError(msg);
         }

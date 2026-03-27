@@ -104,35 +104,37 @@ const BN254_FR: [u8; 32] = [
 ];
 
 /// Reduce a 32-byte big-endian value mod BN254_Fr.
-/// If the value is already < Fr, returns it unchanged.
-/// Otherwise, computes value - Fr (sufficient since value < 2^256 < 2*Fr).
+/// Solana pubkey bytes interpreted as big-endian can be up to 2^256-1.
+/// Since 2^256 / Fr ≈ 5.29, we need at most 5 subtractions.
 fn reduce_mod_fr(bytes: &[u8]) -> [u8; 32] {
-    let mut ge = true; // bytes >= Fr?
-    for i in 0..32 {
-        if bytes[i] < BN254_FR[i] {
-            ge = false;
-            break;
-        } else if bytes[i] > BN254_FR[i] {
-            break;
-        }
-    }
-    if !ge {
-        let mut out = [0u8; 32];
-        out.copy_from_slice(bytes);
-        return out;
-    }
-    // Subtract Fr (big-endian)
     let mut out = [0u8; 32];
-    let mut borrow: u16 = 0;
-    for i in (0..32).rev() {
-        let a = bytes[i] as u16;
-        let b = BN254_FR[i] as u16 + borrow;
-        if a >= b {
-            out[i] = (a - b) as u8;
-            borrow = 0;
-        } else {
-            out[i] = (256 + a - b) as u8;
-            borrow = 1;
+    out.copy_from_slice(bytes);
+    for _ in 0..5 {
+        let mut ge = true;
+        for i in 0..32 {
+            if out[i] < BN254_FR[i] {
+                ge = false;
+                break;
+            } else if out[i] > BN254_FR[i] {
+                break;
+            }
+        }
+        if !ge {
+            return out;
+        }
+        // Subtract Fr (big-endian)
+        let mut borrow: u16 = 0;
+        let prev = out;
+        for i in (0..32).rev() {
+            let a = prev[i] as u16;
+            let b = BN254_FR[i] as u16 + borrow;
+            if a >= b {
+                out[i] = (a - b) as u8;
+                borrow = 0;
+            } else {
+                out[i] = (256 + a - b) as u8;
+                borrow = 1;
+            }
         }
     }
     out

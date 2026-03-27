@@ -1,0 +1,710 @@
+{
+  "address": "DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59",
+  "metadata": {
+    "name": "solnadocash",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "SolnadoCash privacy protocol — Groth16 ZK proofs + stealth addresses on Solana"
+  },
+  "instructions": [
+    {
+      "name": "benchmark_groth16",
+      "discriminator": [
+        176,
+        115,
+        216,
+        107,
+        149,
+        157,
+        249,
+        15
+      ],
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "benchmark_poseidon",
+      "discriminator": [
+        4,
+        14,
+        230,
+        87,
+        63,
+        22,
+        31,
+        25
+      ],
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_pool",
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "denomination",
+          "type": "u64"
+        },
+        {
+          "name": "version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "pause_pool",
+      "discriminator": [
+        160,
+        15,
+        12,
+        189,
+        160,
+        0,
+        243,
+        245
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unpause_pool",
+      "discriminator": [
+        241,
+        148,
+        129,
+        243,
+        222,
+        125,
+        125,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "nullifier_pda",
+          "writable": true
+        },
+        {
+          "name": "recipient",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer must be signer and pays nullifier rent"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "WithdrawArgs"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Pool",
+      "discriminator": [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    },
+    {
+      "name": "VaultAccount",
+      "discriminator": [
+        230,
+        251,
+        241,
+        83,
+        139,
+        202,
+        93,
+        28
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "DepositEvent",
+      "discriminator": [
+        120,
+        248,
+        61,
+        83,
+        31,
+        142,
+        107,
+        144
+      ]
+    },
+    {
+      "name": "PoolNearSaturation",
+      "discriminator": [
+        17,
+        208,
+        234,
+        234,
+        8,
+        14,
+        211,
+        152
+      ]
+    },
+    {
+      "name": "WithdrawalEvent",
+      "discriminator": [
+        161,
+        53,
+        185,
+        18,
+        98,
+        254,
+        54,
+        165
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "PoolPaused",
+      "msg": "pool is paused"
+    },
+    {
+      "code": 6001,
+      "name": "PoolSaturated",
+      "msg": "pool is saturated"
+    },
+    {
+      "code": 6002,
+      "name": "TreeFull",
+      "msg": "merkle tree is full"
+    },
+    {
+      "code": 6003,
+      "name": "RootNotFound",
+      "msg": "root not found in history"
+    },
+    {
+      "code": 6004,
+      "name": "NullifierAlreadySpent",
+      "msg": "nullifier already spent"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidProof",
+      "msg": "invalid proof"
+    },
+    {
+      "code": 6006,
+      "name": "ProofDeserializationFailed",
+      "msg": "proof deserialization failed"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidWithdrawalCommitment",
+      "msg": "invalid withdrawal commitment"
+    },
+    {
+      "code": 6008,
+      "name": "RelayerFeeExceedsMax",
+      "msg": "relayer fee exceeds max"
+    },
+    {
+      "code": 6009,
+      "name": "FeeInvariantViolated",
+      "msg": "fee invariant violated"
+    },
+    {
+      "code": 6010,
+      "name": "DenominationTooLow",
+      "msg": "denomination < 500"
+    },
+    {
+      "code": 6011,
+      "name": "VersionTooHigh",
+      "msg": "version = 255"
+    },
+    {
+      "code": 6012,
+      "name": "PoseidonFailed",
+      "msg": "poseidon hash failed"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidPoolPda",
+      "msg": "invalid pool PDA"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidVaultPda",
+      "msg": "invalid vault PDA"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidTreasury",
+      "msg": "invalid treasury"
+    },
+    {
+      "code": 6016,
+      "name": "RelayerNotSigner",
+      "msg": "relayer not signer"
+    },
+    {
+      "code": 6017,
+      "name": "ArithmeticOverflow",
+      "msg": "arithmetic overflow"
+    },
+    {
+      "code": 6018,
+      "name": "BenchmarkVerifierInit",
+      "msg": "groth16 verifier init failed"
+    },
+    {
+      "code": 6019,
+      "name": "BenchmarkVerifyFailed",
+      "msg": "groth16 proof verify failed"
+    },
+    {
+      "code": 6020,
+      "name": "BenchmarkPoseidonHash",
+      "msg": "Poseidon hash failed in benchmark"
+    }
+  ],
+  "types": [
+    {
+      "name": "DepositEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "leaf",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pool",
+      "docs": [
+        "Pool account — zero_copy(unsafe) to avoid large stack allocations during",
+        "Borsh deserialization. Data is accessed as a direct memory reference.",
+        "is_paused stored as u8: 0 = false, 1 = true."
+      ],
+      "serialization": "bytemuckunsafe",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "type": "u64"
+          },
+          {
+            "name": "mint_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "_pad0",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          },
+          {
+            "name": "next_index",
+            "type": "u64"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "is_paused",
+            "type": "u8"
+          },
+          {
+            "name": "_pad1",
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            }
+          },
+          {
+            "name": "current_root_index",
+            "type": "u64"
+          },
+          {
+            "name": "root_history",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                256
+              ]
+            }
+          },
+          {
+            "name": "filled_subtrees",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                20
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolNearSaturation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "next_index",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultAccount",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "WithdrawArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "proof_a",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "proof_b",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "proof_c",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "nullifier_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "withdrawal_commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "relayer_fee_max",
+            "type": "u64"
+          },
+          {
+            "name": "relayer_fee_taken",
+            "type": "u64"
+          },
+          {
+            "name": "nullifier_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WithdrawalEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "relayer",
+            "type": "pubkey"
+          },
+          {
+            "name": "relayer_fee",
+            "type": "u64"
+          },
+          {
+            "name": "treasury_fee",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

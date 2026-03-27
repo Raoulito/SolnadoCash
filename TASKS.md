@@ -56,7 +56,7 @@
 - [x] T40 — Write Withdraw.tsx (3-click flow: paste note → enter recipient → confirm)
 - [x] T41 — Integrate SDK into frontend — real proof generation with progress callback
 - [x] T42 — Pool saturation routing: query next_index before deposit, auto-route to V2 if >= 950k (BF-11)
-- [ ] T43 — User testing: complete deposit + withdrawal on devnet without reading any documentation
+- [x] T43 — User testing: complete deposit + withdrawal on devnet without reading any documentation
 
 ## Phase 6 — Testnet + Launch
 

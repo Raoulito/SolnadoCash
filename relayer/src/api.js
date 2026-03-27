@@ -215,18 +215,60 @@ export function createApp({ connection, relayerKeypair, programId }) {
         pendingNullifiers.delete(nullifierHex);
       }
     } catch (err) {
-      // Map known on-chain errors to HTTP status codes
       const msg = err.message || "";
-      if (msg.includes("NullifierAlreadySpent")) {
+      const logs = err.logs || [];
+
+      // Log full error for debugging
+      console.error("[submit_proof] Error:", msg);
+      if (logs.length) {
+        console.error("[submit_proof] Program logs:");
+        logs.forEach((l) => console.error("  ", l));
+      }
+
+      // Map known on-chain program errors
+      if (msg.includes("NullifierAlreadySpent") || msg.includes("0x1774")) {
         return res.status(400).json({ error: "NullifierSpent" });
       }
-      if (msg.includes("RootNotFound")) {
+      if (msg.includes("RootNotFound") || msg.includes("0x1773")) {
         return res.status(400).json({ error: "StaleRoot" });
       }
-      if (msg.includes("InvalidProof")) {
+      if (msg.includes("InvalidProof") || msg.includes("0x1775") || msg.includes("0x1776")) {
         return res.status(400).json({ error: "InvalidProof" });
       }
-      console.error("[submit_proof] Error:", err);
+      if (msg.includes("InvalidWithdrawalCommitment") || msg.includes("0x1777")) {
+        return res.status(400).json({ error: "InvalidWithdrawalCommitment" });
+      }
+      if (msg.includes("RelayerFeeExceedsMax") || msg.includes("0x1778")) {
+        return res.status(400).json({ error: "RelayerFeeExceedsMax" });
+      }
+      if (msg.includes("FeeInvariantViolated") || msg.includes("0x1779")) {
+        return res.status(400).json({ error: "FeeInvariantViolated" });
+      }
+      if (msg.includes("PoolPaused") || msg.includes("0x1770")) {
+        return res.status(400).json({ error: "PoolPaused" });
+      }
+
+      // Map Solana/network errors
+      if (msg.includes("insufficient funds") || msg.includes("InsufficientFunds")) {
+        return res.status(503).json({ error: "RelayerInsufficientFunds", message: "Relayer wallet has insufficient SOL" });
+      }
+      if (msg.includes("blockhash") || msg.includes("BlockhashNotFound")) {
+        return res.status(503).json({ error: "BlockhashExpired", message: "Transaction expired, try again" });
+      }
+      if (msg.includes("AccountNotFound") || msg.includes("account does not exist")) {
+        return res.status(400).json({ error: "AccountNotFound", message: "A required account was not found on-chain" });
+      }
+      if (msg.includes("Simulation failed") || msg.includes("Transaction simulation failed")) {
+        // Extract the specific program error from logs
+        const programError = logs.find((l) => l.includes("Error:") || l.includes("failed:"));
+        return res.status(400).json({
+          error: "SimulationFailed",
+          message: programError || msg,
+          logs: logs.slice(-5),
+        });
+      }
+
+      // Fallback — include message so frontend can display useful info
       res.status(500).json({ error: "InternalError", message: msg });
     }
   });

@@ -25,8 +25,8 @@ const snarkjs = require("snarkjs");
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const DENOMINATION = new anchor.BN(100_000_000); // 0.1 SOL
-const DENOMINATION_BI = 100_000_000n;
+const DENOMINATION = new anchor.BN(1_000_000_000); // 1 SOL
+const DENOMINATION_BI = 1_000_000_000n;
 const VERSION = 0;
 const TREE_DEPTH = 20;
 
@@ -216,12 +216,9 @@ async function main() {
   const admin = Keypair.generate();
   const treasury = Keypair.generate();
 
-  // Relayer and recipient pubkeys must be < BN254_FIELD_ORDER because the on-chain
-  // reduce_mod_fr only does a single subtraction (fails for values >= 2*Fr).
-  // Same approach as tests/withdraw.ts.
-  let recipient, relayer;
-  do { recipient = Keypair.generate(); } while (pubkeyToBigInt(recipient.publicKey) >= BN254_FIELD_ORDER);
-  do { relayer = Keypair.generate(); } while (pubkeyToBigInt(relayer.publicKey) >= BN254_FIELD_ORDER);
+  // On-chain reduce_mod_fr handles any 32-byte pubkey (up to 5 subtractions of Fr).
+  const recipient = Keypair.generate();
+  const relayer = Keypair.generate();
 
   console.log("  Admin (depositor):", admin.publicKey.toBase58());
   console.log("  Treasury:         ", treasury.publicKey.toBase58());
@@ -232,7 +229,7 @@ async function main() {
 
   console.log("\nStep 2 — Funding admin and relayer from fee payer...");
 
-  const fundAdminAmount = 200_000_000; // 0.2 SOL
+  const fundAdminAmount = 1_100_000_000; // 1.1 SOL (1 SOL deposit + pool rent + buffer)
   const fundRelayerAmount = 5_000_000; // 0.005 SOL
   const fundTreasuryAmount = 1_000_000; // 0.001 SOL — treasury must be rent-exempt before receiving fees
 
@@ -316,9 +313,9 @@ async function main() {
   const tree = new IncrementalMerkleTree(TREE_DEPTH);
   const { pathElements, pathIndices, root } = tree.insert(commitment);
 
-  // Use raw bigint (no mod Fr) since we ensured pubkeys are < Fr in Step 1
-  const relayerField = pubkeyToBigInt(relayer.publicKey);
-  const recipientField = pubkeyToBigInt(recipient.publicKey);
+  // Reduce pubkeys mod Fr to match on-chain reduce_mod_fr
+  const relayerField = pubkeyToField(relayer.publicKey);
+  const recipientField = pubkeyToField(recipient.publicKey);
   const withdrawalCommitment = poseidonHash(
     relayerField,
     RELAYER_FEE_MAX,
