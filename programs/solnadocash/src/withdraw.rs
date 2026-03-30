@@ -181,11 +181,11 @@ pub fn process_withdraw(
     // 6. Verify nullifier PDA does NOT exist (double-spend check)
     require!(nullifier_info.data_is_empty(), ErrorCode::NullifierAlreadySpent);
 
-    // 7. Verify nullifier PDA address is correct
-    let expected_nullifier = Pubkey::create_program_address(
-        &[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash, &[args.nullifier_bump]],
+    // 7. Verify nullifier PDA address is correct (canonical bump only — prevents double-spend)
+    let (expected_nullifier, canonical_bump) = Pubkey::find_program_address(
+        &[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash],
         program_id,
-    ).map_err(|_| error!(ErrorCode::InvalidPoolPda))?;
+    );
     require!(*nullifier_info.key == expected_nullifier, ErrorCode::InvalidPoolPda);
 
     // 8. Groth16 proof verification
@@ -248,7 +248,7 @@ pub fn process_withdraw(
             nullifier_info.to_account_info(),
             system_program.to_account_info(),
         ],
-        &[&[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash, &[args.nullifier_bump]]],
+        &[&[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash, &[canonical_bump]]],
     )?;
 
     // 14. Write nullifier account data
