@@ -153,7 +153,23 @@ pub fn process_withdraw(
     let relayer_info   = &accounts[IDX_RELAYER];
     let system_program = &accounts[IDX_SYSTEM_PROGRAM];
 
-    // 1. Read pool fields directly from account data (no stack allocation)
+    // 1a. Verify pool is owned by this program
+    require!(*pool_info.owner == *program_id, ErrorCode::InvalidPoolPda);
+
+    // 1b. Verify pool discriminator matches Pool struct
+    const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
+    {
+        let data = pool_info.try_borrow_data()?;
+        require!(data.len() >= 8 && data[..8] == POOL_DISCRIMINATOR, ErrorCode::InvalidPoolPda);
+    }
+
+    // 1c. Verify system program
+    require!(
+        *system_program.key == anchor_lang::solana_program::system_program::ID,
+        ErrorCode::InvalidSystemProgram
+    );
+
+    // 2. Read pool fields directly from account data (no stack allocation)
     let vault_bump: u8;
     let pool_treasury: Pubkey;
     let pool_denomination: u64;

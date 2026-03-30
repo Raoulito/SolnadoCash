@@ -44,4 +44,6 @@ pub enum ErrorCode {
     BenchmarkVerifyFailed,
     #[msg("Poseidon hash failed in benchmark")]
     BenchmarkPoseidonHash,
+    #[msg("invalid system program")]
+    InvalidSystemProgram,
 }
