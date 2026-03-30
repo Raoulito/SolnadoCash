@@ -46,4 +46,6 @@ pub enum ErrorCode {
     BenchmarkPoseidonHash,
     #[msg("invalid system program")]
     InvalidSystemProgram,
+    #[msg("vault has insufficient balance")]
+    InsufficientVaultBalance,
 }

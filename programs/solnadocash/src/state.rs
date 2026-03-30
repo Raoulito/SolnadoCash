@@ -109,6 +109,10 @@ impl Pool {
     }
 
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
+        // Reject zero root — empty history slots are all zeros
+        if root == &[0u8; 32] {
+            return false;
+        }
         for stored in self.root_history.iter() {
             if stored == root {
                 return true;

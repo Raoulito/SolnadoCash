@@ -75,6 +75,10 @@ fn read_pool_fields(pool_info: &AccountInfo) -> Result<(u8, Pubkey, u64, bool)> 
 /// Scan root_history to check if root is known.
 /// root_history starts at offset 136 (after discriminator) in the pool account data.
 fn is_known_root_in_account(pool_info: &AccountInfo, root: &[u8; 32]) -> Result<bool> {
+    // Reject zero root — empty history slots are all zeros
+    if root == &[0u8; 32] {
+        return Ok(false);
+    }
     let data = pool_info.try_borrow_data()?;
     let d = &data[8..]; // skip discriminator
     // root_history at offset 136, ROOT_HISTORY_SIZE entries of 32 bytes each
@@ -298,6 +302,7 @@ pub fn process_withdraw(
     drop(nullifier_data);
 
     // 15. Direct lamport mutation for SOL transfers (vault is program-owned PDA)
+    require!(vault_info.lamports() >= pool_denomination, ErrorCode::InsufficientVaultBalance);
     **vault_info.try_borrow_mut_lamports()? -= pool_denomination;
     **treasury_info.try_borrow_mut_lamports()? += treasury_fee;
     **relayer_info.try_borrow_mut_lamports()? += args.relayer_fee_taken;
