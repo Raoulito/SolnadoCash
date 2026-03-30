@@ -13,7 +13,6 @@ pub mod deposit;
 pub mod withdraw;
 pub mod admin;
 
-use crate::error::ErrorCode;
 use crate::state::{Pool, VaultAccount, POOL_SIZE};
 use crate::withdraw::WithdrawArgs;
 pub use crate::events::*;

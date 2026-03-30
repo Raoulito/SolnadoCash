@@ -33,45 +33,6 @@ pub struct WithdrawArgs {
     pub nullifier_bump: u8,
 }
 
-/// Read pool fields directly from account data bytes.
-/// Pool layout (after 8-byte discriminator, matching state.rs #[repr(C)]):
-///   offset 0:   admin (32 bytes)
-///   offset 32:  mint (32 bytes)
-///   offset 64:  denomination (8 bytes, u64 LE)
-///   offset 72:  mint_decimals (1 byte)
-///   offset 73:  _pad0 (7 bytes)
-///   offset 80:  next_index (8 bytes)
-///   offset 88:  treasury (32 bytes)
-///   offset 120: version (1 byte)
-///   offset 121: bump (1 byte)
-///   offset 122: vault_bump (1 byte)
-///   offset 123: is_paused (1 byte)
-///   offset 124: _pad1 (4 bytes)
-///   offset 128: current_root_index (8 bytes)
-///   offset 136: root_history (8192 bytes)
-///   offset 8328: filled_subtrees (640 bytes)
-fn read_pool_fields(pool_info: &AccountInfo) -> Result<(u8, Pubkey, u64, bool)> {
-    let data = pool_info.try_borrow_data()?;
-    // Skip 8-byte anchor discriminator
-    let d = &data[8..];
-    if d.len() < 128 + 8192 {
-        return Err(error!(ErrorCode::InvalidPoolPda));
-    }
-
-    // vault_bump at offset 122
-    let vault_bump = d[122];
-    // treasury at offset 88
-    let treasury = Pubkey::try_from(&d[88..120]).map_err(|_| error!(ErrorCode::InvalidPoolPda))?;
-    // denomination at offset 64
-    let denomination = u64::from_le_bytes(d[64..72].try_into().map_err(|_| error!(ErrorCode::InvalidPoolPda))?);
-    // current_root_index at offset 128
-    let current_root_index = u64::from_le_bytes(d[128..136].try_into().map_err(|_| error!(ErrorCode::InvalidPoolPda))?) as usize;
-
-    // Check root history — root_history starts at offset 136
-    // Each entry is 32 bytes; we scan all ROOT_HISTORY_SIZE entries
-    Ok((vault_bump, treasury, denomination, current_root_index as u8 > 0)) // placeholder
-}
-
 /// Scan root_history to check if root is known.
 /// root_history starts at offset 136 (after discriminator) in the pool account data.
 fn is_known_root_in_account(pool_info: &AccountInfo, root: &[u8; 32]) -> Result<bool> {
@@ -240,7 +201,7 @@ pub fn process_withdraw(
     verifier.verify().map_err(|_| error!(ErrorCode::InvalidProof))?;
 
     // 9. Verify withdrawal_commitment = Poseidon(relayer, relayer_fee_max, recipient)
-    //    Pubkey bytes (32 bytes big-endian) may exceed BN254_Fq, so we reduce mod Fq
+    //    Pubkey bytes (32 bytes big-endian) may exceed BN254_Fr, so we reduce mod Fr
     //    before passing to sol_poseidon. Both on-chain and off-chain must agree.
     let relayer_field = reduce_mod_fr(relayer_info.key.as_ref());
     let recipient_field = reduce_mod_fr(recipient_info.key.as_ref());
