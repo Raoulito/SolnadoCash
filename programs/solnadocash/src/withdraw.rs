@@ -145,6 +145,9 @@ pub fn process_withdraw(
     accounts: &[AccountInfo],
     args: WithdrawArgs,
 ) -> Result<()> {
+    // 0. Verify sufficient accounts passed
+    require!(accounts.len() >= 7, ErrorCode::InvalidPoolPda);
+
     let pool_info      = &accounts[IDX_POOL];
     let vault_info     = &accounts[IDX_VAULT];
     let nullifier_info = &accounts[IDX_NULLIFIER_PDA];
@@ -201,6 +204,7 @@ pub fn process_withdraw(
         program_id,
     ).map_err(|_| error!(ErrorCode::InvalidVaultPda))?;
     require!(*vault_info.key == expected_vault, ErrorCode::InvalidVaultPda);
+    require!(*vault_info.owner == *program_id, ErrorCode::InvalidVaultPda);
 
     // 4. Verify treasury matches pool
     require!(*treasury_info.key == pool_treasury, ErrorCode::InvalidTreasury);
