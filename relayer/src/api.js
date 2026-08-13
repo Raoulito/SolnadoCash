@@ -21,6 +21,7 @@ import {
 } from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
+import { preflight } from "./preflight.js";
 
 /**
  * Create the Express app with all routes.
@@ -241,6 +242,20 @@ export function createApp({ connection, relayerKeypair, programId }) {
         return res
           .status(503)
           .json({ error: "RelayerBusy", retryAfter: 300 });
+      }
+
+      // M-4: reject submissions that cannot succeed on-chain BEFORE paying for a
+      // transaction. A valid proof can still be doomed by a rotated root or a
+      // commitment bound to a different relayer/fee/recipient.
+      const pf = await preflight({
+        poolData: poolInfo.data,
+        publicSignals,
+        relayerPubkey: relayerKeypair.publicKey,
+        recipientPubkey,
+        relayerFeeMax: feeMax,
+      });
+      if (!pf.ok) {
+        return res.status(400).json({ error: pf.error, message: pf.message });
       }
 
       // Mark nullifier as pending

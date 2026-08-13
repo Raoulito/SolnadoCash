@@ -97,7 +97,14 @@ Anyone can run a relayer. The relayer's role is to submit the withdrawal transac
 - The user locks `relayer_fee_max` into their ZK proof before submission
 - On-chain enforcement: `fee_taken <= relayer_fee_max` (the relayer cannot take more than agreed)
 
-**Fee transparency as defense:** The protocol cannot verify actual gas costs on-chain (Solana has no gas oracle). Instead, the SDK publishes each relayer's historical `fee_taken / fee_max` ratio from on-chain events. Relayers that always claim the maximum are ranked lower. Users can choose any relayer. Market competition keeps fees honest — the same model that worked for Tornado Cash's relayer network.
+**Fee limits as defense:** The protocol cannot verify actual gas costs on-chain (Solana has no gas oracle), so it bounds them instead:
+
+- **On-chain cap** — `relayer_fee_max <= denomination / 50` (2%) is enforced in `withdraw`. A withdrawal costs a relayer ~0.0031 SOL at rest, so this leaves ample room for congestion while making a confiscatory fee unrepresentable. The user always keeps at least 97.8%.
+- **Client-side validation** — the SDK's `validateFeeQuote` recomputes every figure locally from the denomination, rejects quotes above the cap before a proof is generated, and rejects a relayer whose advertised "you receive" figure contradicts its own fee ceiling.
+- **Explicit consent** — the withdraw UI shows the maximum fee and the guaranteed minimum received *before* the ceiling is bound into the proof.
+- **Honest reference relayer** — it charges its measured cost (base fee + priority fee + nullifier rent), not the ceiling, and attaches the priority fee it bills for.
+
+> **Not implemented:** there is no relayer reputation or ranking system. An earlier version of this document claimed the SDK published each relayer's historical `fee_taken / fee_max` ratio and ranked relayers accordingly — no such code exists. Relayer choice is currently manual, and a relayer may claim up to the 2% cap. Treat relayer selection as trusted-but-bounded.
 
 ### No Admin Backdoors
 
