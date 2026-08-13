@@ -165,6 +165,39 @@ describe("fees", () => {
     });
   });
 
+  describe("small-pool relayability (N-1)", () => {
+    it("cost fits under the 2% cap for a 0.1 SOL pool even though cost*margin does not", async () => {
+      // The regression: quoting cost*margin and refusing above the cap made the 0.1 SOL
+      // pool unrelayable, pushing users into self-relaying (which reveals the gas payer).
+      // The fee ceiling must be min(cost*margin, cap), refusing only if cost > cap.
+      const mockConnection = {
+        getRecentPrioritizationFees: async () => [],
+        getMinimumBalanceForRentExemption: async () => 1_447_680,
+      };
+      const cost = BigInt(await computeRelayerCost(mockConnection));
+      const withMargin = BigInt(await computeRelayerFeeMax(mockConnection));
+      const cap = 100_000_000n / 50n; // 0.1 SOL pool
+
+      assert.ok(cost <= cap, `cost ${cost} must fit under cap ${cap} — pool is servable`);
+      assert.ok(withMargin > cap, "precondition: cost*margin exceeds the cap here");
+
+      const quoted = withMargin <= cap ? withMargin : cap;
+      assert.equal(quoted, cap);
+      // Still covers the real cost with headroom for congestion.
+      assert.ok(quoted > cost, "quoted ceiling must exceed real cost");
+    });
+
+    it("a pool too small to cover nullifier rent is correctly refused", async () => {
+      const mockConnection = {
+        getRecentPrioritizationFees: async () => [],
+        getMinimumBalanceForRentExemption: async () => 1_447_680,
+      };
+      const cost = BigInt(await computeRelayerCost(mockConnection));
+      const cap = 900_000n / 50n; // a pool at the N-3 floor
+      assert.ok(cost > cap, "no relayer can serve this pool at any price");
+    });
+  });
+
   describe("getPriorityFeePerCU", () => {
     it("returns the 90th percentile in micro-lamports/CU", async () => {
       const mockConnection = {

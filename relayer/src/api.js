@@ -12,6 +12,7 @@ import rateLimit from "express-rate-limit";
 import { PublicKey } from "@solana/web3.js";
 import {
   computeRelayerFeeMax,
+  computeRelayerCost,
   computeTreasuryFee,
   computeMinUserReceives,
   getPriorityFeePerCU,
@@ -22,6 +23,7 @@ import {
 import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
 import { preflight } from "./preflight.js";
+import { loadPool } from "./pool.js";
 
 /**
  * Create the Express app with all routes.
@@ -157,35 +159,46 @@ export function createApp({ connection, relayerKeypair, programId }) {
         return res.status(400).json({ error: "InvalidPoolAddress" });
       }
 
-      // Read pool denomination from on-chain account
-      const poolInfo = await connection.getAccountInfo(poolPubkey);
-      if (!poolInfo) {
-        return res.status(404).json({ error: "PoolNotFound" });
+      // N-2: validate this really is a program-owned Pool before reading any offset.
+      const pool = await loadPool(connection, programId, poolPubkey);
+      if (!pool.ok) {
+        return res
+          .status(pool.status)
+          .json({ error: pool.error, message: pool.message });
       }
+      const denomination = pool.denomination;
 
-      // denomination at offset 8 (discriminator) + 64 = 72, 8 bytes LE
-      const denomBytes = poolInfo.data.subarray(72, 80);
-      const denomination = denomBytes.readBigUInt64LE();
-
-      const relayerFeeMax = await computeRelayerFeeMax(connection);
+      const relayerCost = await computeRelayerCost(connection);
       const treasuryFee = computeTreasuryFee(denomination);
 
-      // Never quote a fee the pool cannot honour. The on-chain guard caps
-      // relayer_fee_max at denomination/50; refuse to serve rather than hand the
-      // user a ceiling that would make their proof unusable (H-3).
+      // The on-chain cap is denomination/50 (2%). The dominant relayer cost — the
+      // nullifier account rent — is FIXED, not proportional to the denomination, so
+      // for small pools `cost * margin` can exceed the cap even though `cost` alone
+      // fits comfortably. Refusing in that case made the 0.1 SOL pool unrelayable and
+      // pushed users into self-relaying, which reveals the gas payer and defeats the
+      // whole point (N-1).
+      //
+      // So: quote min(cost * margin, cap), and refuse only when the real cost itself
+      // cannot fit under the cap — at which point no honest relayer can serve the pool
+      // at any price.
       const onChainCap = denomination / 50n;
-      if (BigInt(relayerFeeMax) > onChainCap) {
+      if (BigInt(relayerCost) > onChainCap) {
         return res.status(503).json({
           error: "FeeAbovePoolCap",
           message:
-            "Network fees currently exceed this pool's maximum relayer fee. Try again later or use a larger denomination.",
-          relayerFeeMax: relayerFeeMax.toString(),
+            "This pool's denomination is too small to cover the cost of relaying a " +
+            "withdrawal (nullifier rent alone exceeds the 2% fee cap). Use a larger " +
+            "denomination.",
+          relayerCost: relayerCost.toString(),
           cap: onChainCap.toString(),
         });
       }
+
+      const withMargin = BigInt(await computeRelayerFeeMax(connection));
+      const relayerFeeMax = withMargin <= onChainCap ? withMargin : onChainCap;
       const estimatedUserReceives = computeMinUserReceives(
         denomination,
-        BigInt(relayerFeeMax)
+        relayerFeeMax
       );
 
       res.json({
@@ -244,13 +257,17 @@ export function createApp({ connection, relayerKeypair, programId }) {
       }
 
       // Read treasury from pool account
-      const poolInfo = await connection.getAccountInfo(poolPubkey);
-      if (!poolInfo) {
-        return res.status(404).json({ error: "PoolNotFound" });
+      // N-2: validate the pool account BEFORE spending anything. Without this an
+      // attacker points the relayer at an account they authored, passes preflight
+      // against their own root history, and burns the relayer's fees on a transaction
+      // that cannot succeed.
+      const pool = await loadPool(connection, programId, poolPubkey);
+      if (!pool.ok) {
+        return res
+          .status(pool.status)
+          .json({ error: pool.error, message: pool.message });
       }
-      // treasury at offset 8 + 88 = 96, 32 bytes
-      const treasuryBytes = poolInfo.data.subarray(96, 128);
-      const treasuryAddress = new PublicKey(treasuryBytes);
+      const treasuryAddress = new PublicKey(pool.treasury);
 
       // Compute the fee to take. An honest relayer charges its REAL cost, not the
       // ceiling the user agreed to (H-3): relayerFeeMax exists to absorb fee
@@ -282,7 +299,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
       // transaction. A valid proof can still be doomed by a rotated root or a
       // commitment bound to a different relayer/fee/recipient.
       const pf = await preflight({
-        poolData: poolInfo.data,
+        poolData: pool.data,
         publicSignals,
         relayerPubkey: relayerKeypair.publicKey,
         recipientPubkey,
