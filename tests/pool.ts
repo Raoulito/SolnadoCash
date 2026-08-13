@@ -181,6 +181,84 @@ describe("Pool management (T21)", () => {
       }
     });
 
+    it("rejects denomination below the rent-exempt payout floor (N-3)", async () => {
+      // A withdrawal pays user_amount to a FRESH address, and the runtime refuses to
+      // leave an account below rent.minimum_balance(0) = 890,880 lamports. Measured
+      // on a validator: 890,879 rejected, 890,880 accepted.
+      //
+      // Worst case: user_amount = denom - denom/500 - denom/50, so the floor is
+      // ~910,900 lamports. The old BF-14 limit of 500 was ~1822x too low and allowed
+      // pools whose deposits could never be withdrawn privately.
+      const tooLow = new BN(900_000); // above 500, below the real floor
+      const admin2 = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        admin2.publicKey,
+        2 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      const [poolPda2] = findPoolPda(admin2.publicKey, tooLow, 0, program.programId);
+      const [vaultPda2] = findVaultPda(poolPda2, program.programId);
+
+      try {
+        await program.methods
+          .initializePool(tooLow, 0)
+          .accountsPartial({
+            admin: admin2.publicKey,
+            pool: poolPda2,
+            vault: vaultPda2,
+            treasury: admin2.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([admin2])
+          .rpc();
+        assert.fail(
+          "FUND TRAP: created a pool whose deposits cannot be withdrawn to a fresh address"
+        );
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "DenominationTooLow",
+          `Expected DenominationTooLow, got: ${err.message}`
+        );
+      }
+    });
+
+    it("accepts a denomination just above the payout floor (N-3)", async () => {
+      // 911_000 - 1_822 - 18_220 = 890_958 >= 890_880
+      const justEnough = new BN(911_000);
+      const admin3 = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        admin3.publicKey,
+        2 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      const [poolPda3] = findPoolPda(admin3.publicKey, justEnough, 0, program.programId);
+      const [vaultPda3] = findVaultPda(poolPda3, program.programId);
+
+      await program.methods
+        .initializePool(justEnough, 0)
+        .accountsPartial({
+          admin: admin3.publicKey,
+          pool: poolPda3,
+          vault: vaultPda3,
+          treasury: admin3.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin3])
+        .rpc();
+
+      const acc = await provider.connection.getAccountInfo(poolPda3);
+      assert.ok(acc !== null, "pool just above the floor must be creatable");
+
+      // Sanity: the worst-case payout for this pool clears the rent floor.
+      const denom = 911_000;
+      const worst = denom - Math.floor(denom / 500) - Math.floor(denom / 50);
+      const minRent = await provider.connection.getMinimumBalanceForRentExemption(0);
+      assert.isAtLeast(worst, minRent, "worst-case payout must clear rent");
+    });
+
     it("rejects version = 255", async () => {
       const admin3 = Keypair.generate();
       const sig = await provider.connection.requestAirdrop(
