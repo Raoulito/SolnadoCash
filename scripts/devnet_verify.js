@@ -35,7 +35,7 @@ const crypto = require("crypto");
 // Dedicated verification pool: 0.02 SOL, distinct from the 0.1/1/10 SOL pools.
 const DENOMINATION_BI = 20_000_000n;
 const DENOMINATION = new anchor.BN(DENOMINATION_BI.toString());
-const VERSION = 0;
+const VERSION = 1; // v1 = dedicated verification pool (v0 holds earlier runs)
 const TREE_DEPTH = 20;
 
 const BN254_FIELD_ORDER =
@@ -172,6 +172,28 @@ class Tree {
   }
 }
 
+// ── Leaf cache ───────────────────────────────────────────────────────────────
+// Every leaf in the verification pool is inserted by this script, so cache them
+// locally. Rebuilding from getTransaction logs hits public-RPC rate limits fast
+// (which is finding H-5 in miniature).
+const CACHE_PATH = path.join(__dirname, ".devnet_verify_leaves.json");
+function loadLeaves(poolKey) {
+  try {
+    const all = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    return (all[poolKey] || []).map((x) => BigInt(x));
+  } catch {
+    return [];
+  }
+}
+function saveLeaves(poolKey, leaves) {
+  let all = {};
+  try {
+    all = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+  } catch {}
+  all[poolKey] = leaves.map((x) => x.toString());
+  fs.writeFileSync(CACHE_PATH, JSON.stringify(all, null, 1));
+}
+
 // ── Test bookkeeping ─────────────────────────────────────────────────────────
 const results = [];
 function record(id, name, ok, detail) {
@@ -204,7 +226,7 @@ async function fetchTxFee(connection, sig, tries = 10) {
 }
 
 // ── Shared fixture ───────────────────────────────────────────────────────────
-async function setupFixture(program, provider) {
+async function setupFixture(program, provider, recipientPredicate = null) {
   const connection = provider.connection;
   const funder = provider.wallet;
 
@@ -241,7 +263,10 @@ async function setupFixture(program, provider) {
   // Relayer signs the withdrawal and pays nullifier rent.
   // Any address works: the pubkey->field encoding is collision-resistant (H-2).
   const relayer = Keypair.generate();
-  const recipient = Keypair.generate();
+  let recipient = Keypair.generate();
+  if (recipientPredicate) {
+    while (!recipientPredicate(recipient.publicKey)) recipient = Keypair.generate();
+  }
 
   const fundRelayer = new anchor.web3.Transaction().add(
     SystemProgram.transfer({
@@ -255,41 +280,58 @@ async function setupFixture(program, provider) {
   // Deposit the note under test, plus one filler deposit so the vault can fund
   // a SECOND payout. Without the filler an exploit attempt would fail on
   // InsufficientVaultBalance and prove nothing.
-  const tree = new Tree(TREE_DEPTH);
 
   // Replay existing leaves so our Merkle root matches the on-chain tree.
+  const tree = new Tree(TREE_DEPTH);
+  const poolKey = poolPda.toBase58();
   const poolData = (await connection.getAccountInfo(poolPda)).data;
   const nextIndex = Number(poolData.readBigUInt64LE(8 + 80));
-  if (nextIndex > 0) {
-    // Rebuild from DepositEvent logs for this pool.
-    const coder = new anchor.BorshCoder(program.idl);
-    const parser = new anchor.EventParser(program.programId, coder);
-    const sigs = await connection.getSignaturesForAddress(poolPda, { limit: 1000 }, "confirmed");
-    sigs.reverse();
-    const leaves = [];
-    for (const s of sigs) {
-      if (s.err) continue;
-      const tx = await connection.getTransaction(s.signature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-      if (!tx?.meta?.logMessages) continue;
-      for (const ev of parser.parseLogs(tx.meta.logMessages)) {
-        if (ev.name === "DepositEvent" || ev.name === "depositEvent") {
-          let v = 0n;
-          for (const b of ev.data.leaf) v = (v << 8n) | BigInt(b);
-          leaves.push({ v, i: Number(ev.data.leafIndex) });
+
+  let cached = loadLeaves(poolKey);
+  if (cached.length !== nextIndex) {
+    if (nextIndex === 0) {
+      cached = [];
+    } else {
+      console.log(`  Cache miss (${cached.length}/${nextIndex}) — rebuilding from logs...`);
+      const coder = new anchor.BorshCoder(program.idl);
+      const parser = new anchor.EventParser(program.programId, coder);
+      const sigs = await connection.getSignaturesForAddress(poolPda, { limit: 1000 }, "confirmed");
+      sigs.reverse();
+      const found = [];
+      for (const sg of sigs) {
+        if (sg.err) continue;
+        let tx = null;
+        for (let attempt = 0; attempt < 5 && !tx; attempt++) {
+          try {
+            tx = await connection.getTransaction(sg.signature, {
+              commitment: "confirmed",
+              maxSupportedTransactionVersion: 0,
+            });
+          } catch {
+            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          }
+        }
+        await new Promise((r) => setTimeout(r, 120)); // throttle
+        if (!tx?.meta?.logMessages) continue;
+        for (const ev of parser.parseLogs(tx.meta.logMessages)) {
+          if (ev.name === "DepositEvent" || ev.name === "depositEvent") {
+            let v = 0n;
+            for (const b of ev.data.leaf) v = (v << 8n) | BigInt(b);
+            found.push({ v, i: Number(ev.data.leafIndex) });
+          }
         }
       }
+      found.sort((a, b) => a.i - b.i);
+      cached = found.map((f) => f.v);
     }
-    leaves.sort((a, b) => a.i - b.i);
-    for (const l of leaves) tree.insert(l.v);
-    if (tree.layers[0].length !== nextIndex) {
+    if (cached.length !== nextIndex) {
       throw new Error(
-        `Merkle rebuild mismatch: on-chain next_index=${nextIndex}, rebuilt=${tree.layers[0].length}`
+        `Merkle rebuild mismatch: on-chain next_index=${nextIndex}, rebuilt=${cached.length}`
       );
     }
+    saveLeaves(poolKey, cached);
   }
+  for (const l of cached) tree.insert(l);
 
   const note = {
     nullifier: randomFieldElem(),
@@ -309,7 +351,9 @@ async function setupFixture(program, provider) {
       })
       .rpc();
     tree.insert(c);
+    cached.push(c);
   }
+  saveLeaves(poolKey, cached);
 
   const leafIndex = tree.layers[0].indexOf(note.commitment);
   const { pathElements, pathIndices, root } = tree.proof(leafIndex);
@@ -587,6 +631,61 @@ async function verifyH1(program, provider, fx) {
   );
 }
 
+// ── H-2: aliased recipient substitution ──────────────────────────────────────
+async function verifyH2(program, provider, fx) {
+  console.log("\n── H-2: recipient substitution via field-element alias ──");
+
+  // The alias of the committed recipient: same value under the OLD mod-Fr
+  // encoding, a different address on chain.
+  const recipInt = pubkeyToBigInt(fx.recipient.publicKey);
+  const aliasInt = recipInt + BN254_FIELD_ORDER;
+  if (aliasInt >= 1n << 256n) {
+    record("H-2", "alias fits in 32 bytes", false, "recipient too large; rerun");
+    return;
+  }
+  const alias = new PublicKey(bigIntToBytes32(aliasInt));
+
+  record(
+    "H-2",
+    "old mod-Fr encoding collided for these two addresses (attack precondition)",
+    (recipInt % BN254_FIELD_ORDER) === (aliasInt % BN254_FIELD_ORDER) &&
+      !alias.equals(fx.recipient.publicKey),
+    `${fx.recipient.publicKey.toBase58().slice(0, 8)}… vs ${alias.toBase58().slice(0, 8)}…`
+  );
+  record(
+    "H-2",
+    "new encoding separates them",
+    pubkeyToField(fx.recipient.publicKey) !== pubkeyToField(alias),
+    "distinct field elements"
+  );
+
+  await expectReject(
+    "H-2",
+    "substituted alias recipient is rejected",
+    "InvalidWithdrawalCommitment",
+    () => withdrawCall(program, fx, fx.baseArgs, { recipient: alias }).rpc()
+  );
+
+  const aliasBal = await provider.connection.getBalance(alias);
+  record("H-2", "alias received nothing", aliasBal === 0, `${aliasBal} lamports`);
+
+  // The note must still be spendable by the intended recipient.
+  const before = await provider.connection.getBalance(fx.recipient.publicKey);
+  try {
+    const sig = await withdrawCall(program, fx, fx.baseArgs).rpc();
+    const after = await provider.connection.getBalance(fx.recipient.publicKey);
+    const expectedUser = DENOMINATION_BI - TREASURY_FEE - RELAYER_FEE_TAKEN;
+    record(
+      "H-2",
+      "intended recipient still paid in full",
+      BigInt(after - before) === expectedUser,
+      `+${after - before} (expected ${expectedUser}), tx ${sig.slice(0, 12)}…`
+    );
+  } catch (err) {
+    record("H-2", "intended recipient still paid in full", false, err.message);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -625,6 +724,15 @@ async function main() {
   if (wanted("H-1")) {
     console.log("\nPreparing fixture for H-1...");
     await verifyH1(program, provider, await setupFixture(program, provider));
+  }
+  if (wanted("H-2")) {
+    console.log("\nPreparing fixture for H-2...");
+    // Needs a recipient whose +Fr alias still fits in 32 bytes (~81% of keys).
+    await verifyH2(
+      program,
+      provider,
+      await setupFixture(program, provider, (pk) => pubkeyToBigInt(pk) + BN254_FIELD_ORDER < 1n << 256n)
+    );
   }
 
   console.log("\n═══════════════════════════════════════════════════════════");
