@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useConnection } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import {
   decodeNote,
@@ -13,7 +13,8 @@ import {
 import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndicator';
 import { rebuildMerkleTree } from '../utils/merkle';
 import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
-import { RELAYER_URL } from '../config';
+import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice';
+import { explorerTxUrl } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
 
@@ -60,6 +61,7 @@ function isValidSolanaAddress(addr: string): boolean {
 
 export default function Withdraw() {
   const { connection } = useConnection();
+  const { publicKey: connectedWallet } = useWallet();
 
   const [step, setStep] = useState<Step>('paste');
   const [noteInput, setNoteInput] = useState('');
@@ -74,6 +76,11 @@ export default function Withdraw() {
   const [breakdown, setBreakdown] = useState<FeeBreakdown | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  // H-6: honest linkability warnings
+  const isOwnWallet =
+    !!connectedWallet && recipient.trim() === connectedWallet.toBase58();
+  const sameSession = depositedThisSession();
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   const executeWithdraw = useCallback(async () => {
@@ -303,7 +310,7 @@ export default function Withdraw() {
           <h2 className="text-lg font-semibold mb-1">Where to withdraw?</h2>
           <p className="text-zinc-400 text-sm">
             Enter the Solana address that will receive the funds.
-            It can be any wallet — no link to your deposit.
+            It can be any wallet. There is no on-chain link to your deposit.
           </p>
         </div>
 
@@ -379,6 +386,18 @@ export default function Withdraw() {
           </p>
         </div>
 
+        {isOwnWallet && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <p className="text-amber-400 text-sm font-medium mb-1">
+              This is your connected wallet
+            </p>
+            <p className="text-amber-400/70 text-xs leading-relaxed">
+              Withdrawing to the wallet you have connected here defeats the point:
+              anyone watching this wallet sees the funds arrive. Use a fresh address.
+            </p>
+          </div>
+        )}
+
         <div className="bg-zinc-800/50 rounded-xl p-5 space-y-3">
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Amount</span>
@@ -420,6 +439,8 @@ export default function Withdraw() {
             The ZK proof is computed in your browser — your secret note never leaves this device.
           </p>
         </div>
+
+        <PrivacyNotice sameSession={sameSession} />
 
         <button
           onClick={executeWithdraw}
@@ -534,7 +555,7 @@ export default function Withdraw() {
 
         {txSig && (
           <a
-            href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
+            href={explorerTxUrl(txSig)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block text-cyan-400 text-sm hover:text-cyan-300 transition-colors underline"

@@ -36,7 +36,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
           <p className="text-zinc-400 text-sm leading-relaxed">
             Every transaction you make is visible to everyone, forever.
             <br />
-            SolnadoCash breaks the link between sender and receiver.
+            SolnadoCash breaks the on-chain link between sender and receiver.
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
             <span className="text-zinc-600">→</span>
             <span className="bg-zinc-800 px-3 py-1.5 rounded-lg">Withdraw anywhere</span>
           </div>
-          <p className="text-zinc-500 text-xs mt-2">No link. No trace. No jargon.</p>
+          <p className="text-zinc-500 text-xs mt-2">No on-chain link. No jargon.</p>
         </div>
 
         {/* CTA */}

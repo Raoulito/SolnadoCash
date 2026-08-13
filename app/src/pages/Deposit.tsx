@@ -7,7 +7,8 @@ import PoolSelector from '../components/PoolSelector';
 import NoteDisplay from '../components/NoteDisplay';
 import { usePoolInfo } from '../hooks/usePool';
 import { getProgram, buildDepositTx } from '../utils/program';
-import type { PoolConfig } from '../config';
+import { markDepositedThisSession } from '../components/PrivacyNotice';
+import { explorerTxUrl, type PoolConfig } from '../config';
 
 type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
@@ -180,6 +181,9 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         setTxSig(sig);
         setSecretNote(note.encoded);
+        // Record the deposit so the withdraw flow can warn about same-session
+        // correlation (H-6).
+        markDepositedThisSession();
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
@@ -275,7 +279,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           </h2>
           {txSig && (
             <a
-              href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`}
+              href={explorerTxUrl(txSig)}
               target="_blank"
               rel="noopener noreferrer"
               className="text-cyan-400/70 text-xs hover:text-cyan-400 transition-colors underline"
@@ -310,7 +314,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             <div className="flex gap-3">
               <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
               <p className="text-zinc-400 text-sm">
-                Your SOL is now in the privacy pool. <strong className="text-zinc-300">Nobody</strong> can link it to you.
+                Your SOL is now in the privacy pool. There is no <strong className="text-zinc-300">on-chain</strong> link between this deposit and a future withdrawal.
               </p>
             </div>
             <div className="flex gap-3">
@@ -322,7 +326,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             <div className="flex gap-3">
               <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
               <p className="text-zinc-400 text-sm">
-                Enter <strong className="text-zinc-300">any</strong> wallet address as recipient — no link, no trace.
+                Enter <strong className="text-zinc-300">any</strong> wallet address as recipient. Wait before withdrawing — withdrawing immediately, from this same network, lets the relayer and your RPC provider correlate the two by timing.
               </p>
             </div>
           </div>

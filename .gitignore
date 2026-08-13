@@ -20,6 +20,9 @@ TASKS.md
 # ── Environment and secrets ──────────────────────────────────────────────────
 .env
 .env.*
+# …but keep the documented templates
+!.env.example
+!**/.env.example
 *.pem
 *.key
 

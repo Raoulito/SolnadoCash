@@ -31,12 +31,39 @@ import { submitWithdraw } from "./tx.js";
  * @param {PublicKey} deps.programId - SolnadoCash program ID
  * @returns {express.Express}
  */
+/**
+ * Strip base58 addresses and long hex blobs from a message so relayer logs do not
+ * become a deposit/withdrawal correlation database (H-6).
+ */
+function redactIdentifiers(msg) {
+  return String(msg)
+    .replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, "[addr]")
+    .replace(/\b[0-9a-fA-F]{32,}\b/g, "[hex]");
+}
+
 export function createApp({ connection, relayerKeypair, programId }) {
   const app = express();
 
-  // CORS — allow frontend dev server
+  // CORS — restrict to configured origins (H-6). Defaults to "*" for local
+  // development; set ALLOWED_ORIGINS in production so an arbitrary site cannot
+  // drive a visitor's browser into this relayer.
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || "*")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (allowedOrigins.includes("*")) {
+    console.warn(
+      "[relayer] ALLOWED_ORIGINS is unset — accepting requests from any origin. Set it in production."
+    );
+  }
   app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes("*")) {
+      res.header("Access-Control-Allow-Origin", "*");
+    } else if (origin && allowedOrigins.includes(origin)) {
+      res.header("Access-Control-Allow-Origin", origin);
+      res.header("Vary", "Origin");
+    }
     res.header("Access-Control-Allow-Headers", "Content-Type");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -245,9 +272,12 @@ export function createApp({ connection, relayerKeypair, programId }) {
       const msg = err.message || "";
       const logs = err.logs || [];
 
-      // Log full error for debugging
-      console.error("[submit_proof] Error:", msg);
-      if (logs.length) {
+      // H-6: the relayer already learns the recipient, the nullifier and the
+      // request IP. Do not additionally persist them to logs unless an operator
+      // explicitly opts in for debugging — program logs echo the nullifier hash.
+      const verboseLogs = process.env.LOG_WITHDRAW_DETAILS === "1";
+      console.error("[submit_proof] Error:", verboseLogs ? msg : redactIdentifiers(msg));
+      if (logs.length && verboseLogs) {
         console.error("[submit_proof] Program logs:");
         logs.forEach((l) => console.error("  ", l));
       }
@@ -291,6 +321,8 @@ export function createApp({ connection, relayerKeypair, programId }) {
         return res.status(400).json({
           error: "SimulationFailed",
           message: programError || msg,
+          // Returned to the caller (who already knows these values) but never
+          // written to relayer logs unless LOG_WITHDRAW_DETAILS=1.
           logs: logs.slice(-5),
         });
       }

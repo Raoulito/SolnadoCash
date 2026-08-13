@@ -1,9 +1,47 @@
-import { clusterApiUrl } from '@solana/web3.js';
+import { clusterApiUrl, type Cluster } from '@solana/web3.js';
 
-export const NETWORK = 'devnet' as const;
-export const RPC_ENDPOINT = clusterApiUrl('devnet');
-export const RELAYER_URL = 'http://localhost:3000';
-export const PROGRAM_ID = 'DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59';
+// ── Environment-driven configuration (H-6) ──────────────────────────────────
+// Previously devnet, an http:// relayer and the pool list were hardcoded, so a
+// build could not be pointed at another network without editing source, and a
+// production deployment would silently ship a localhost relayer.
+
+const env = import.meta.env as Record<string, string | undefined>;
+
+export const NETWORK = (env.VITE_SOLANA_NETWORK ?? 'devnet') as Cluster;
+
+export const RPC_ENDPOINT = env.VITE_RPC_ENDPOINT ?? clusterApiUrl(NETWORK);
+
+export const RELAYER_URL = (env.VITE_RELAYER_URL ?? 'http://localhost:3000').replace(
+  /\/+$/,
+  ''
+);
+
+export const PROGRAM_ID =
+  env.VITE_PROGRAM_ID ?? 'DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59';
+
+/** Explorer link for a transaction on the configured network. */
+export function explorerTxUrl(signature: string): string {
+  const suffix = NETWORK === 'mainnet-beta' ? '' : `?cluster=${NETWORK}`;
+  return `https://explorer.solana.com/tx/${signature}${suffix}`;
+}
+
+/**
+ * True when the relayer would be reached over plaintext HTTP from a non-local
+ * origin. In that case the network path — and anyone on it — sees the recipient
+ * address and nullifier alongside the user's IP.
+ */
+export function relayerTransportIsInsecure(): boolean {
+  if (!RELAYER_URL.startsWith('http://')) return false;
+  try {
+    const host = new URL(RELAYER_URL).hostname;
+    return !(host === 'localhost' || host === '127.0.0.1' || host === '[::1]');
+  } catch {
+    return true;
+  }
+}
+
+/** True when this build is pointed at a real-money network. */
+export const IS_MAINNET = NETWORK === 'mainnet-beta';
 
 export interface PoolConfig {
   label: string;
