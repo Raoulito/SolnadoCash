@@ -9,6 +9,12 @@ marked **[verified]** below (dependency source inspection, numeric reproduction,
 pooled funds. One of them (C-1) requires no privileged position, no cryptography and no capital
 beyond a single deposit.
 
+> **Remediation status (updated during fixing).** C-1, H-1 and H-2 are FIXED, verified on a local
+> validator and against the deployed devnet program (18/18 devnet checks). C-2 and C-3 are
+> ACCEPTED RISKS for now at the owner's decision: the single-party ceremony and the live upgrade
+> authority are deliberate while the protocol is pre-launch and under repair; both must be
+> resolved before mainnet. Remaining: H-3, H-4, H-5, H-6 and the medium/low items.
+
 | Severity | Count | IDs |
 |---|---|---|
 | Critical | 3 | C-1 … C-3 |
@@ -53,7 +59,7 @@ where the bugs actually are.
 
 ## 2. Critical
 
-### C-1 — Double-spend via non-canonical public inputs: any depositor drains the pool
+### C-1 — Double-spend via non-canonical public inputs: any depositor drains the pool — FIXED
 
 **Files:** `programs/solnadocash/src/withdraw.rs:186`, `:192`, `:251`
 
@@ -125,7 +131,7 @@ require!(is_canonical_fr(&args.withdrawal_commitment), ErrorCode::NonCanonicalIn
 Apply the same rule to *any* future public input, and add a regression test that submits
 `h + Fr` and expects failure. Do not rely on `groth16-solana` to do this.
 
-### C-2 — Single-party trusted setup: the operator can forge unlimited withdrawals
+### C-2 — Single-party trusted setup: the operator can forge unlimited withdrawals — ACCEPTED RISK (pre-launch)
 
 **File:** `scripts/trusted_setup.sh:88-104` (withdraw), `:115-131` (deposit)
 
@@ -154,7 +160,7 @@ a real beacon with a pre-announced source, published transcript + per-contributi
 and committed `withdraw.r1cs` / `withdraw_vk.json` so third parties can run `snarkjs zkey verify`
 themselves. Delete the deposit ceremony entirely (see M-9 — that circuit is unused).
 
-### C-3 — Program upgrade authority == pool admin == treasury: single-key custody backdoor
+### C-3 — Program upgrade authority == pool admin == treasury: single-key custody backdoor — ACCEPTED RISK (pre-launch)
 
 **Verified live on devnet:**
 
@@ -186,7 +192,7 @@ on-chain proof.
 
 ## 3. High
 
-### H-1 — 1 lamport permanently freezes any note (nullifier PDA pre-funding)
+### H-1 — a cheap transfer permanently freezes any note (nullifier PDA pre-funding) — FIXED
 
 **File:** `programs/solnadocash/src/withdraw.rs:238-253`
 
@@ -203,15 +209,18 @@ and no one holds a private key for it, so the lamports can never be moved. Who l
 - the relayer, which receives the full proof before submitting;
 - any leader/RPC/mempool observer that sees the transaction and front-runs it with a priority fee.
 
-Cost to the attacker: 1 lamport + one signature. Cost to the victim: the entire deposit. A hostile
-relayer can burn every note it is asked to relay while still collecting its fee.
+Cost to the attacker: the rent-exempt minimum for a 0-byte account, ~890,880 lamports
+(≈0.00089 SOL) — *not* 1 lamport as first assessed, because the runtime rejects any transaction
+leaving an account below rent-exemption. Confirmed experimentally while writing the regression
+test. Still ~1:1100 against a 1 SOL note. Cost to the victim: the entire deposit. A hostile relayer
+can burn every note it is asked to relay while still collecting its fee.
 
 **Fix.** Use the ATA-program pattern: if `nullifier_info.lamports() > 0`, top up the difference
 with `system_instruction::transfer` and then `allocate` + `assign` via `invoke_signed`
 (both succeed on a system-owned, zero-data account); otherwise `create_account` as today.
 Add a test that pre-funds the PDA and expects the withdrawal to still succeed.
 
-### H-2 — Recipient can be swapped for an unspendable alias (relayer griefing, funds burned)
+### H-2 — Recipient can be swapped for an unspendable alias (relayer griefing, funds burned) — FIXED
 
 **Files:** `programs/solnadocash/src/withdraw.rs:74-107` (`reduce_mod_fr`), `:206-215`;
 `sdk/src/proof.ts:76-81` (`pubkeyToField`)
@@ -233,11 +242,21 @@ alias would require an ed25519 discrete log or a SHA-256 preimage for a PDA), so
 destruction rather than theft — but from the user's side the loss is total, and BF-20's stated
 guarantee ("swapping any of the three invalidates the hash") is false.
 
-**Fix.** Bind the recipient by its full 32-byte identity. Cleanest: split into two field elements
-and hash both — `withdrawalCommitment = Poseidon(relayer_hi, relayer_lo, feeMax, recip_hi,
-recip_lo)` (e.g. hi = 16 high bytes, lo = 16 low bytes), computed identically in
-`withdraw.circom`, `sdk/src/proof.ts` and `withdraw.rs`. Requires a circuit change → new
-ceremony, so bundle it with C-2's redo.
+**Fix (implemented).** Change the pubkey→field *encoding* rather than the commitment structure:
+`field = Poseidon(hi, lo)` over the two 128-bit halves of the pubkey. The halves are a bijection of
+the pubkey and both are < 2^128 < Fr, so a collision now requires ~2^127 work.
+
+The important observation is that this encoding lives entirely **outside** the circuit —
+`withdraw.circom` consumes `recipient` and `relayerAddress` as opaque field elements and never sees
+a pubkey. So the fix needs **no circuit change, no new ceremony, and invalidates no existing
+notes** (the withdrawal commitment is computed fresh at withdrawal time). It must be applied
+atomically across `withdraw.rs`, `sdk/src/proof.ts` and every test/script that builds the
+commitment.
+
+Two alternatives were rejected: requiring `recipient < Fr` on-chain would make ~19% of all Solana
+addresses unusable as recipients (bad UX and a late-failing footgun), and widening the commitment
+to five inputs would have forced a new ceremony for no additional security. Cost of the chosen fix
+is +3,249 CU (99,799 -> 103,048).
 
 ### H-3 — Relayer fee is computed in the wrong unit: 10⁶× overcharge
 
