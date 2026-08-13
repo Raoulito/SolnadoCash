@@ -2,7 +2,6 @@
 // T31 — generateNote, encodeNote, decodeNote per Section 12.5
 
 import { PublicKey } from "@solana/web3.js";
-import { randomBytes } from "crypto";
 
 // BN254 scalar field prime (Fr) — Poseidon and circuits operate over this field
 const BN254_FIELD_ORDER =
@@ -20,8 +19,38 @@ export interface SecretNote {
 
 // ── Internal helpers ────────────────────────────────────────────────────────
 
+/**
+ * Fill a buffer with cryptographically secure random bytes (L-2).
+ *
+ * This is the single most security-critical operation in the protocol: these bytes
+ * ARE the note, and anyone who can predict them can steal the deposit.
+ *
+ * Previously this used Node's `crypto.randomBytes`, which in the browser resolved
+ * through vite-plugin-node-polyfills → crypto-browserify → randombytes. That chain
+ * does end at `crypto.getRandomValues`, but it made note secrecy depend on bundler
+ * configuration: a polyfill misconfiguration, a swapped shim, or a bundler that
+ * stubs the module would silently degrade the RNG with no visible error.
+ *
+ * Now the Web Crypto API is called directly — available natively in browsers and in
+ * Node >= 19 via globalThis.crypto — with an explicit throw if it is unavailable
+ * rather than any fallback. There is no safe fallback for this.
+ */
+function secureRandomBytes(length: number): Uint8Array {
+  const g = globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array } };
+  if (!g.crypto || typeof g.crypto.getRandomValues !== "function") {
+    throw new Error(
+      "No cryptographically secure random number generator available. " +
+        "A secret note must never be generated without one. Use a modern browser " +
+        "or Node.js >= 19."
+    );
+  }
+  const bytes = new Uint8Array(length);
+  g.crypto.getRandomValues(bytes);
+  return bytes;
+}
+
 function randomFieldElement(): bigint {
-  const bytes = randomBytes(32);
+  const bytes = secureRandomBytes(32);
   let n = 0n;
   for (const b of bytes) n = (n << 8n) | BigInt(b);
   return n % BN254_FIELD_ORDER;

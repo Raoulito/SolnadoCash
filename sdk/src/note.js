@@ -6,13 +6,25 @@ exports.generateNote = generateNote;
 exports.encodeNote = encodeNote;
 exports.decodeNote = decodeNote;
 const web3_js_1 = require("@solana/web3.js");
-const crypto_1 = require("crypto");
+
 // BN254 scalar field prime (Fr) — Poseidon and circuits operate over this field
 const BN254_FIELD_ORDER = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const NOTE_PREFIX = "sndo_";
 // ── Internal helpers ────────────────────────────────────────────────────────
+function secureRandomBytes(length) {
+    // L-2: call Web Crypto directly rather than depending on a bundler polyfill of
+    // Node's crypto.randomBytes. No fallback — there is no safe one for note secrecy.
+    const g = globalThis;
+    if (!g.crypto || typeof g.crypto.getRandomValues !== "function") {
+        throw new Error("No cryptographically secure random number generator available. " +
+            "A secret note must never be generated without one. Use a modern browser or Node.js >= 19.");
+    }
+    const bytes = new Uint8Array(length);
+    g.crypto.getRandomValues(bytes);
+    return bytes;
+}
 function randomFieldElement() {
-    const bytes = (0, crypto_1.randomBytes)(32);
+    const bytes = secureRandomBytes(32);
     let n = 0n;
     for (const b of bytes)
         n = (n << 8n) | BigInt(b);
