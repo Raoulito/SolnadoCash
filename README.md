@@ -49,11 +49,11 @@ A second withdrawal with the same nullifier is rejected at the Solana runtime le
 
 **Root history** — The contract stores the last 256 Merkle roots. Proofs are validated against any recent root, preventing race conditions between concurrent deposits and withdrawals. Stale roots beyond the history window are rejected.
 
-**Fee invariant** — Every withdrawal enforces on-chain:
-```
-treasury_fee + relayer_fee_taken + user_amount == denomination
-```
-No lamports can be created or destroyed during withdrawal.
+**Fee conservation** — Every withdrawal verifies the ledger after moving lamports: the vault must be debited exactly one denomination, and the treasury, relayer and recipient must each be credited exactly their share. The vault may not also be the recipient, treasury or relayer, since duplicate accounts share a lamport cell and would net funds back into the vault.
+
+**Relayer fee cap** — `relayer_fee_max <= denomination / 50` (2%) is enforced on-chain, and `user_amount > 0` is required. The user always keeps at least 97.8%.
+
+**Canonical public inputs** — All three ZK public inputs must be canonical BN254 field elements (`< Fr`). BN254 scalar multiplication reduces mod the group order and the syscall does not range-check the scalar, so `x` and `x + k*Fr` verify identically; because `nullifier_hash` is also a PDA seed, accepting a non-canonical value would allow the same note to be withdrawn 5-6 times.
 
 **Pool isolation** — Pool PDA seeds include the admin key and a version byte, preventing treasury hijacking and ensuring V1/V2 pools have distinct addresses:
 ```
@@ -82,8 +82,10 @@ SOL transfers use **direct lamport mutation**, not `system_program::transfer` (w
 |-------------|---------------|-------|
 | `initialize_pool` | 16,289 | Pool + vault PDA creation |
 | `deposit` | 25,955 | 20-level Poseidon Merkle insert + SOL transfer |
-| `withdraw` | 99,713 | Groth16 verify + commitment check + nullifier PDA + fee split |
-| **Safety margin** | **93% headroom** | Single-transaction withdrawal, no splitting needed |
+| `withdraw` | 101,762 | Canonical-input guards + Groth16 verify + commitment check + nullifier PDA + fee split + conservation check |
+| **Safety margin** | **~93% headroom** | Single-transaction withdrawal, no splitting needed |
+
+Measured on a local validator by `tests/withdraw.ts`. The withdraw figure rose from 99,713 during the security fixes: +2 Poseidon hashes for the collision-resistant pubkey encoding, and the canonical-input and lamport-conservation guards.
 
 ## Decentralization
 
@@ -106,13 +108,26 @@ Anyone can run a relayer. The relayer's role is to submit the withdrawal transac
 
 > **Not implemented:** there is no relayer reputation or ranking system. An earlier version of this document claimed the SDK published each relayer's historical `fee_taken / fee_max` ratio and ranked relayers accordingly — no such code exists. Relayer choice is currently manual, and a relayer may claim up to the 2% cap. Treat relayer selection as trusted-but-bounded.
 
-### No Admin Backdoors
+### Admin Powers — current state
 
-- The admin can **pause deposits** but can **never block withdrawals**
-- The admin cannot modify pool parameters after initialization
-- The admin cannot access the vault — only ZK proofs can authorize withdrawals
-- The treasury address is set at pool creation and cannot be changed
-- All protocol logic is on-chain and verifiable
+What the pool admin **cannot** do, enforced by the program:
+
+- Block withdrawals. `is_paused` gates deposits only; a withdrawal succeeds while paused (asserted by test, on a local validator and on devnet)
+- Modify pool parameters after initialization
+- Change the treasury address, which is fixed at pool creation
+- Move vault funds through any instruction — only a valid ZK proof authorizes a transfer
+
+> **The program is currently upgradeable, and that overrides everything above.** The
+> BPF upgrade authority is live and is the same key as the pool admin and the treasury.
+> Whoever holds it can deploy new code that drains every vault, because the vaults are
+> program-owned PDAs. Verify for yourself:
+> `solana program show DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59 --url devnet`
+>
+> This is deliberate while the protocol is pre-launch and under active repair. It must
+> be resolved before mainnet by setting the authority to `--final` or transferring it to
+> a timelocked multisig, and by splitting the admin, treasury and upgrade roles onto
+> distinct keys. Until then, this protocol is custodial in practice. Treat any claim of
+> trustlessness as false while that key exists.
 
 ### Censorship Resistance
 
@@ -120,7 +135,7 @@ The protocol is designed so that no single party can prevent a valid withdrawal:
 - **Validators** see the proof and public signals, but cannot determine which deposit is being withdrawn
 - **Relayers** are interchangeable — if one refuses, any other can submit the same proof
 - **The admin** cannot block withdrawals even with the pause flag
-- **The contract** is immutable once deployed (standard Solana BPF program)
+- **The contract** is *not* yet immutable — the upgrade authority is still live (see Admin Powers above). Immutability is a launch requirement, not a current property.
 
 ## Protocol Fee
 
