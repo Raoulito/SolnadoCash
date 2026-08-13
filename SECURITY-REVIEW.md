@@ -19,10 +19,14 @@ beyond a single deposit.
 > H-4/H-6 are client-side findings, so they carry unit tests and build verification rather than
 > on-chain proof; H-5's verifier is exercised against live devnet pool data.
 >
-> **All ten MEDIUM findings are also FIXED** (M-1 … M-10), verified by 32 local on-chain tests,
-> 21 Rust unit, 91 SDK and 31 relayer tests. Two of them corrected errors in this document: see the
-> retraction under M-6, and M-9 where a circuit comment documented a protection the program never
-> enforced. The M-2 program change awaits a devnet redeploy (blocked on devnet funding).
+> **All ten MEDIUM and all ten LOW findings are also FIXED** (M-1 … M-10, L-1 … L-10).
+> Final state: 23 Rust unit, 30 local on-chain (+2 benchmark tests correctly skipped), 96 SDK,
+> 31 relayer, and 33/33 on-chain checks against the deployed devnet program.
+>
+> Several fixes corrected errors in this document rather than in the code — see the retraction
+> under M-6 (the close_nullifier advice was unsafe), M-9 (a circuit comment claimed a protection
+> the program never enforced), and L-10 (the README claimed immutability that does not hold).
+> Only C-2 and C-3 remain, deferred to deployment by the owner's decision.
 
 | Severity | Count | IDs |
 |---|---|---|
@@ -455,14 +459,14 @@ plus a scan flow) or move it to `experimental/` and adjust the README.
 
 ## 5. Low / hygiene
 
-- **L-1** `randomFieldElement` (`sdk/src/note.ts:29-34`) uses `randomBytes(32) % Fr` — modulo bias
+- **L-1** — FIXED. `randomFieldElement` used `randomBytes(32) % Fr` — modulo bias
   over-weights the low ~5.5% of the range by 20%. Harmless in practice, wrong for the protocol's
   most sensitive value. Use rejection sampling.
 - **L-2** Note secrecy depends on `vite-plugin-node-polyfills` shimming
   `crypto.randomBytes` in the browser. It resolves to a CSPRNG today, but this is a bundler
   configuration standing between the user and their funds. Call
   `globalThis.crypto.getRandomValues` directly with a Node fallback.
-- **L-3** Duplicate commitments are accepted on deposit; the second is unspendable
+- **L-3** — FIXED (detection). Duplicate commitments are accepted on deposit; the second is unspendable
   (one nullifier, one withdrawal). `MerkleTree.findLeaf` uses `indexOf`, returning the first
   match. Cheap 1:1 griefing and a plausible user footgun. Reject `commitment` already present, or
   at minimum warn.
@@ -470,15 +474,15 @@ plus a scan flow) or move it to `experimental/` and adjust the README.
   but still occupies the wire format.
 - **L-5** The empty-tree root stays in `root_history[0]` and is byte-identical across every pool
   of depth 20. Safe only because a Poseidon preimage of `0` is infeasible. Exclude it.
-- **L-6** `POOL_SIZE` is 8 968 in code, documented as 8 964 in `CLAUDE.md` (BF-39).
-- **L-7** `benchmark_groth16` / `benchmark_poseidon` are exposed unconditionally
+- **L-6** — FIXED (docs). `POOL_SIZE` is 8 968 in code (confirmed 8 976 on-chain), was documented as 8 964 in `CLAUDE.md` (BF-39).
+- **L-7** — FIXED. `benchmark_groth16` / `benchmark_poseidon` were exposed unconditionally
   (`lib.rs:148-155`) despite the `benchmark` feature existing. Gate them with
   `#[cfg(feature = "benchmark")]` or delete (TASKS.md T13 says to).
-- **L-8** Nothing warns the user against withdrawing to the wallet currently connected in the
+- **L-8** — FIXED in H-6. Nothing warned the user against withdrawing to the wallet currently connected in the
   same tab, which destroys privacy in one click.
-- **L-9** `NetworkGuard` calls `phantom.solana.request({ method: 'disconnect' })` on every
+- **L-9** — FIXED. `NetworkGuard` called `phantom.solana.request({ method: 'disconnect' })` on every
   connect and then shows the warning banner unconditionally — hostile and useless.
-- **L-10** README drift beyond C-3: "fee invariant" (M-2), relayer reputation ranking (M-4),
+- **L-10** — FIXED. README drift beyond C-3: "fee invariant" (M-2), relayer reputation ranking (M-4),
   stealth addresses (M-10), and `trusted_setup.sh`'s "~25k constraints" vs the real 12 065.
 
 ---
