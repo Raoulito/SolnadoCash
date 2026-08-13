@@ -45,6 +45,26 @@ function redactIdentifiers(msg) {
 export function createApp({ connection, relayerKeypair, programId }) {
   const app = express();
 
+  // M-5: express-rate-limit keys on req.ip. Without an explicit trust-proxy
+  // setting, every request behind a reverse proxy or CDN carries the proxy's IP,
+  // so ALL users share one bucket and the 5/min submit limit becomes a trivial
+  // global denial of service. Trusting the header blindly is equally wrong — a
+  // client can then forge X-Forwarded-For and bypass the limit entirely — so the
+  // hop count must be stated by the operator.
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy !== undefined && trustProxy !== "") {
+    // Number of trusted hops, or an explicit express value (e.g. "loopback").
+    const asNumber = Number(trustProxy);
+    app.set("trust proxy", Number.isFinite(asNumber) ? asNumber : trustProxy);
+    console.log(`[relayer] trust proxy = ${trustProxy}`);
+  } else {
+    console.warn(
+      "[relayer] TRUST_PROXY is unset — rate limits key on the direct socket IP. " +
+        "If this relayer runs behind a proxy, set TRUST_PROXY to the number of hops " +
+        "or every user will share one rate-limit bucket."
+    );
+  }
+
   // CORS — restrict to configured origins (H-6). Defaults to "*" for local
   // development; set ALLOWED_ORIGINS in production so an arbitrary site cannot
   // drive a visitor's browser into this relayer.
@@ -90,6 +110,18 @@ export function createApp({ connection, relayerKeypair, programId }) {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "RelayerBusy", retryAfter: 60 },
+  });
+
+  // A second limiter keyed on the nullifier rather than the IP. IP-based limits
+  // are defeated by address rotation; a nullifier can only ever be spent once, so
+  // repeated submissions of the same one are always either a retry or an attack.
+  const nullifierLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.body?.publicSignals?.[0] ?? "unknown"),
+    message: { error: "TooManyAttemptsForNote", retryAfter: 60 },
   });
 
   // Track pending transactions to avoid double-submission
@@ -170,7 +202,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
   });
 
   // ── POST /submit_proof ───────────────────────────────────────────────────────
-  app.post("/submit_proof", submitLimiter, async (req, res) => {
+  app.post("/submit_proof", submitLimiter, nullifierLimiter, async (req, res) => {
     try {
       const { proof, publicSignals, poolAddress, recipient, relayerFeeMax } =
         req.body;
