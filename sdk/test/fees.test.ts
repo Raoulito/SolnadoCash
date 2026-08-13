@@ -7,6 +7,7 @@ import {
   computeTreasuryFee,
   computeMinUserReceives,
   getFeeQuote,
+  validateFeeQuote,
   FeeQuote,
 } from "../src/fees.js";
 
@@ -170,6 +171,7 @@ describe("T34 — sdk/src/fees.ts", function () {
       );
     });
 
+  describe("getFeeQuote expiry", () => {
     it("throws on expired quote", async () => {
       globalThis.fetch = async () =>
         new Response(
@@ -186,6 +188,90 @@ describe("T34 — sdk/src/fees.ts", function () {
         () => getFeeQuote("http://localhost:3000", pool),
         /Fee quote already expired/
       );
+    });
+  });
+});
+
+  describe("validateFeeQuote (H-4)", () => {
+    const DENOM = 1_000_000_000n; // 1 SOL
+    const TREASURY = 2_000_000n;
+    const relayer = Keypair.generate().publicKey;
+
+    function quote(overrides: Partial<FeeQuote> = {}): FeeQuote {
+      const relayerFeeMax = overrides.relayerFeeMax ?? 3_066_420n;
+      return {
+        relayerAddress: relayer,
+        relayerFeeMax,
+        validUntil: Date.now() + 30_000,
+        estimatedUserReceives: DENOM - TREASURY - relayerFeeMax,
+        ...overrides,
+      };
+    }
+
+    it("derives every figure locally from the denomination", () => {
+      const b = validateFeeQuote(DENOM, quote());
+      assert.equal(b.treasuryFee, TREASURY);
+      assert.equal(b.relayerFeeMax, 3_066_420n);
+      assert.equal(b.userReceivesMin, DENOM - TREASURY - 3_066_420n);
+      assert.equal(b.denomination, DENOM);
+      assert.ok(b.relayerFeePct > 0.3 && b.relayerFeePct < 0.31);
+    });
+
+    it("rejects a fee above the on-chain cap (2%)", () => {
+      // The 1e6 unit bug quoted 0.303 SOL on a 1 SOL pool — 30%.
+      assert.throws(
+        () => validateFeeQuote(DENOM, quote({ relayerFeeMax: 303_066_420n })),
+        /exceeds the maximum/
+      );
+    });
+
+    it("accepts a fee exactly at the cap", () => {
+      const cap = DENOM / 50n;
+      const b = validateFeeQuote(DENOM, quote({ relayerFeeMax: cap }));
+      assert.equal(b.relayerFeeMax, cap);
+      assert.equal(b.relayerFeePct, 2);
+    });
+
+    it("rejects a relayer that misreports what the user receives", () => {
+      // Honest ceiling, dishonest headline figure.
+      assert.throws(
+        () =>
+          validateFeeQuote(
+            DENOM,
+            quote({ relayerFeeMax: 19_000_000n, estimatedUserReceives: 997_000_000n })
+          ),
+        /inconsistent/
+      );
+    });
+
+    it("rejects an expired quote", () => {
+      assert.throws(
+        () => validateFeeQuote(DENOM, quote({ validUntil: Date.now() - 1 })),
+        /expired/
+      );
+    });
+
+    it("rejects a negative fee", () => {
+      assert.throws(
+        () => validateFeeQuote(DENOM, quote({ relayerFeeMax: -1n })),
+        /negative/
+      );
+    });
+
+    it("honours a stricter caller-supplied ceiling", () => {
+      assert.throws(
+        () =>
+          validateFeeQuote(DENOM, quote({ relayerFeeMax: 3_066_420n }), {
+            maxRelayerFee: 1_000_000n,
+          }),
+        /exceeds the maximum/
+      );
+    });
+
+    it("guarantees the user keeps at least 97.8% at the cap", () => {
+      const b = validateFeeQuote(DENOM, quote({ relayerFeeMax: DENOM / 50n }));
+      const kept = Number(b.userReceivesMin) / Number(DENOM);
+      assert.ok(kept >= 0.978, `user kept ${kept}`);
     });
   });
 });

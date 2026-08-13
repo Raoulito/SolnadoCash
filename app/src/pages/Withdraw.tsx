@@ -5,8 +5,10 @@ import {
   decodeNote,
   initPoseidon,
   generateWithdrawProof,
+  validateFeeQuote,
   type SecretNote,
   type FeeQuote,
+  type FeeBreakdown,
 } from '@solnadocash/sdk';
 import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndicator';
 import { rebuildMerkleTree } from '../utils/merkle';
@@ -69,6 +71,9 @@ export default function Withdraw() {
   const [progressError, setProgressError] = useState<string | null>(null);
   const [txSig, setTxSig] = useState<string | null>(null);
   const [feeTaken, setFeeTaken] = useState<string | null>(null);
+  const [breakdown, setBreakdown] = useState<FeeBreakdown | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   const executeWithdraw = useCallback(async () => {
@@ -86,25 +91,29 @@ export default function Withdraw() {
       // Step 0: Fetch fee quote + rebuild Merkle tree in parallel
       await initPoseidon();
 
+      // Re-fetch the quote: the one shown on the confirm screen may have expired
+      // during review. Validate again and abort if the terms got worse, so the
+      // user is never silently committed to a fee they did not see (H-4).
       const [feeQuoteRaw, merkleTree] = await Promise.all([
         fetchFeeQuote(poolPubkey.toBase58()),
         rebuildMerkleTree(connection, poolPubkey),
       ]);
 
-      // Convert relayer fee quote to SDK FeeQuote format
-      const feeQuote: FeeQuote = {
+      const quote: FeeQuote = {
         relayerAddress: new PublicKey(feeQuoteRaw.relayerAddress),
         relayerFeeMax: BigInt(feeQuoteRaw.relayerFeeMax),
         validUntil: feeQuoteRaw.validUntil,
         estimatedUserReceives: BigInt(feeQuoteRaw.estimatedUserReceives),
       };
+      const shownMax = breakdown?.relayerFeeMax ?? quote.relayerFeeMax;
+      validateFeeQuote(note.denomination, quote, { maxRelayerFee: shownMax });
 
       // Step 1: Generate ZK proof (CPU-intensive, ~15-60s)
       setProgressStep(1);
 
       const { proof, publicSignals } = await generateWithdrawProof(
         note,
-        feeQuote,
+        quote,
         new PublicKey(recipient),
         merkleTree,
         CIRCUIT_PATHS
@@ -246,13 +255,39 @@ export default function Withdraw() {
 
   // Step 2: Enter recipient
   if (step === 'recipient') {
-    const handleNext = () => {
+    const handleNext = async () => {
       if (!isValidSolanaAddress(recipient)) {
         setRecipientError('Enter a valid Solana wallet address.');
         return;
       }
+      if (!parsedNote) return;
+
+      // H-4: the relayer fee ceiling is bound into the ZK proof, and the relayer
+      // may then claim all of it. So fetch and validate the quote BEFORE showing
+      // the confirmation, and show the real numbers rather than a placeholder.
       setRecipientError(null);
-      setStep('confirm');
+      setQuoteLoading(true);
+      setQuoteError(null);
+      try {
+        const raw = await fetchFeeQuote(parsedNote.poolAddress);
+        const quote: FeeQuote = {
+          relayerAddress: new PublicKey(raw.relayerAddress),
+          relayerFeeMax: BigInt(raw.relayerFeeMax),
+          validUntil: raw.validUntil,
+          estimatedUserReceives: BigInt(raw.estimatedUserReceives),
+        };
+        // Every displayed figure is recomputed locally from the denomination;
+        // the relayer's own claim is only cross-checked.
+        const b = validateFeeQuote(parsedNote.denominationLamports, quote);
+        setBreakdown(b);
+        setStep('confirm');
+      } catch (err: unknown) {
+        setQuoteError(
+          err instanceof Error ? err.message : 'Could not get a usable fee quote'
+        );
+      } finally {
+        setQuoteLoading(false);
+      }
     };
 
     return (
@@ -301,16 +336,22 @@ export default function Withdraw() {
           )}
         </div>
 
+        {quoteError && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+            <p className="text-red-400 text-sm">{quoteError}</p>
+          </div>
+        )}
+
         <button
           onClick={handleNext}
-          disabled={!recipient.trim()}
+          disabled={!recipient.trim() || quoteLoading}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
-            recipient.trim()
+            recipient.trim() && !quoteLoading
               ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
               : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
           }`}
         >
-          Continue
+          {quoteLoading ? 'Getting fee quote…' : 'Continue'}
         </button>
       </div>
     );
@@ -318,7 +359,7 @@ export default function Withdraw() {
 
   // Step 3: Confirm
   if (step === 'confirm') {
-    const treasuryFee = parsedNote ? parsedNote.denominationSol / 500 : 0;
+    const sol = (lamports: bigint) => Number(lamports) / 1e9;
 
     return (
       <div className="space-y-6">
@@ -332,8 +373,9 @@ export default function Withdraw() {
         <div>
           <h2 className="text-lg font-semibold mb-1">Confirm withdrawal</h2>
           <p className="text-zinc-400 text-sm">
-            A relayer will submit this transaction for you so nobody
-            can identify you. Review the details below.
+            A relayer will submit this transaction for you. Review the amounts —
+            the relayer fee below is the <strong>maximum</strong> it can take, and
+            it is locked into your proof.
           </p>
         </div>
 
@@ -346,13 +388,25 @@ export default function Withdraw() {
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Privacy fee (0.2%)</span>
-            <span className="text-zinc-300">{treasuryFee} SOL</span>
+            <span className="text-zinc-300">
+              {breakdown ? sol(breakdown.treasuryFee) : '—'} SOL
+            </span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">Relayer fee (estimated)</span>
-            <span className="text-zinc-300">~0.000005 SOL</span>
+            <span className="text-zinc-400">
+              Relayer fee (max{breakdown ? ` — ${breakdown.relayerFeePct.toFixed(2)}%` : ''})
+            </span>
+            <span className="text-zinc-300">
+              {breakdown ? sol(breakdown.relayerFeeMax) : '—'} SOL
+            </span>
           </div>
           <div className="border-t border-zinc-700 pt-3 flex justify-between text-sm">
+            <span className="text-zinc-300 font-medium">You receive at least</span>
+            <span className="text-zinc-100 font-semibold">
+              {breakdown ? sol(breakdown.userReceivesMin) : '—'} SOL
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Recipient</span>
             <span className="text-zinc-300 font-mono text-xs">
               {recipient.slice(0, 4)}...{recipient.slice(-4)}
@@ -497,6 +551,8 @@ export default function Withdraw() {
             setRecipient('');
             setTxSig(null);
             setFeeTaken(null);
+            setBreakdown(null);
+            setQuoteError(null);
           }}
           className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-colors text-sm"
         >

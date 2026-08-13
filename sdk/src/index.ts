@@ -18,5 +18,11 @@ export type {
 
 // FeeQuote is defined in both proof.ts and fees.ts (same shape).
 // Re-export from fees.ts as the canonical source.
-export { computeTreasuryFee, computeMinUserReceives, getFeeQuote } from "./fees.js";
-export type { FeeQuote } from "./fees.js";
+export {
+  computeTreasuryFee,
+  computeMinUserReceives,
+  getFeeQuote,
+  validateFeeQuote,
+  MAX_RELAYER_FEE_DIVISOR,
+} from "./fees.js";
+export type { FeeQuote, FeeBreakdown, ValidateQuoteOptions } from "./fees.js";
