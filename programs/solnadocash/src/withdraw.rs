@@ -105,6 +105,38 @@ fn reduce_mod_fr(bytes: &[u8]) -> [u8; 32] {
     out
 }
 
+/// Reject non-canonical field elements (C-1).
+///
+/// BN254 scalar multiplication is performed modulo the group order Fr, and neither
+/// `groth16-solana` nor the `alt_bn128_multiplication` syscall range-checks the
+/// scalar: `solana_program` deserialises it with
+/// `BigInteger256::deserialize_uncompressed_unchecked` and calls `mul_bigint`.
+/// Consequently `x` and `x + k*Fr` yield IDENTICAL curve points and therefore an
+/// identical pairing result — the proof verifies for either value.
+///
+/// That is fatal for `nullifier_hash`, whose raw bytes are used as a PDA seed: an
+/// aliased hash verifies against the same proof but derives a DIFFERENT nullifier
+/// PDA, bypassing the double-spend guard. Since 2^256 / Fr = 5.29, every honest
+/// nullifier hash has 5-6 aliases, i.e. each note could be withdrawn 5-6 times.
+///
+/// Every public input is therefore required to be in canonical form (< Fr) before
+/// the proof is verified. Honest inputs are Poseidon outputs and always satisfy this.
+#[inline(always)]
+fn is_canonical_fr(be: &[u8; 32]) -> bool {
+    let mut i = 0;
+    while i < 32 {
+        if be[i] < BN254_FR[i] {
+            return true;
+        }
+        if be[i] > BN254_FR[i] {
+            return false;
+        }
+        i += 1;
+    }
+    // Exactly equal to Fr — congruent to zero, not canonical.
+    false
+}
+
 pub fn process_withdraw(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -112,6 +144,19 @@ pub fn process_withdraw(
 ) -> Result<()> {
     // 0. Verify sufficient accounts passed
     require!(accounts.len() >= 7, ErrorCode::InvalidPoolPda);
+
+    // 0b. C-1: reject non-canonical public inputs BEFORE any other work.
+    //     Must precede the root scan, the double-spend check and proof verification,
+    //     so an aliased value can never reach a code path that consumes its bytes.
+    require!(
+        is_canonical_fr(&args.nullifier_hash),
+        ErrorCode::NonCanonicalPublicInput
+    );
+    require!(is_canonical_fr(&args.root), ErrorCode::NonCanonicalPublicInput);
+    require!(
+        is_canonical_fr(&args.withdrawal_commitment),
+        ErrorCode::NonCanonicalPublicInput
+    );
 
     let pool_info      = &accounts[IDX_POOL];
     let vault_info     = &accounts[IDX_VAULT];
@@ -279,4 +324,120 @@ pub fn process_withdraw(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse a 64-char hex string into a 32-byte big-endian array.
+    fn be(hex: &str) -> [u8; 32] {
+        assert_eq!(hex.len(), 64);
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        out
+    }
+
+    const FR_HEX: &str = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001";
+
+    #[test]
+    fn fr_constant_matches_known_prime() {
+        // Fr = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+        assert_eq!(BN254_FR, be(FR_HEX));
+    }
+
+    #[test]
+    fn zero_is_canonical() {
+        assert!(is_canonical_fr(&[0u8; 32]));
+    }
+
+    #[test]
+    fn fr_minus_one_is_canonical() {
+        // …f0000001 - 1 = …f0000000
+        let v = be("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
+        assert!(is_canonical_fr(&v));
+    }
+
+    #[test]
+    fn fr_itself_is_not_canonical() {
+        // Congruent to zero mod Fr — must be rejected.
+        assert!(!is_canonical_fr(&BN254_FR));
+    }
+
+    #[test]
+    fn fr_plus_one_is_not_canonical() {
+        let v = be("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000002");
+        assert!(!is_canonical_fr(&v));
+    }
+
+    #[test]
+    fn max_u256_is_not_canonical() {
+        assert!(!is_canonical_fr(&[0xffu8; 32]));
+    }
+
+    #[test]
+    fn typical_poseidon_output_is_canonical() {
+        // ZEROS[19] — a real Poseidon BN254 digest.
+        let v = be("1830ee67b5fb554ad5f63d4388800e1cfe78e310697d46e43c9ce36134f72cca");
+        assert!(is_canonical_fr(&v));
+    }
+
+    /// The attack this guard exists to stop: h and h + k*Fr are distinct byte
+    /// strings (distinct PDA seeds) that Groth16 cannot distinguish. Only the
+    /// canonical representative may be accepted.
+    ///
+    /// The number of in-range aliases depends on h (2^256 / Fr = 5.29), so an
+    /// honest hash has 4 or 5 aliases — i.e. 5 or 6 total spends per note without
+    /// this check.
+    #[test]
+    fn aliases_of_a_canonical_hash_are_all_rejected() {
+        let h = be("1830ee67b5fb554ad5f63d4388800e1cfe78e310697d46e43c9ce36134f72cca");
+        assert!(is_canonical_fr(&h), "base value must be canonical");
+
+        let mut alias = h;
+        let mut rejected = 0u32;
+        for _ in 1..=5u32 {
+            // alias += Fr (big-endian add with carry)
+            let mut carry = 0u16;
+            for i in (0..32).rev() {
+                let sum = alias[i] as u16 + BN254_FR[i] as u16 + carry;
+                alias[i] = (sum & 0xff) as u8;
+                carry = sum >> 8;
+            }
+            if carry != 0 {
+                break; // alias exceeded 2^256 — no longer expressible in 32 bytes
+            }
+            assert!(!is_canonical_fr(&alias), "alias h + k*Fr must be rejected");
+            assert_ne!(alias, h, "alias must differ from h (different PDA seed)");
+            rejected += 1;
+        }
+        assert!(
+            rejected >= 4,
+            "expected at least 4 in-range aliases, found {}",
+            rejected
+        );
+    }
+
+    #[test]
+    fn reduce_mod_fr_agrees_with_canonical_check() {
+        // Any value that reduce_mod_fr leaves untouched must be canonical, and
+        // vice versa. Guards against the two helpers drifting apart.
+        let cases = [
+            [0u8; 32],
+            be("1830ee67b5fb554ad5f63d4388800e1cfe78e310697d46e43c9ce36134f72cca"),
+            BN254_FR,
+            [0xffu8; 32],
+        ];
+        for c in cases {
+            let reduced = reduce_mod_fr(&c);
+            assert!(is_canonical_fr(&reduced), "reduction output must be canonical");
+            assert_eq!(
+                reduced == c,
+                is_canonical_fr(&c),
+                "reduce_mod_fr is the identity exactly on canonical inputs"
+            );
+        }
+    }
 }

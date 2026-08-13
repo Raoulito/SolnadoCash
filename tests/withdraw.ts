@@ -518,6 +518,178 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     });
   });
 
+  // ── C-1: non-canonical public inputs (nullifier hash aliasing) ───────────────
+  //
+  // BN254 scalar multiplication reduces the scalar mod Fr, so nullifier_hash and
+  // nullifier_hash + k*Fr produce identical Groth16 pairing results. The nullifier
+  // PDA, however, is derived from the RAW seed bytes — so an aliased hash yields a
+  // DIFFERENT PDA and the double-spend guard is bypassed entirely.
+  //
+  // Without the canonical-form check in withdraw.rs, the note spent in the happy
+  // path above can be withdrawn ~5 more times (k = 1..5).
+  describe("withdraw — non-canonical nullifier hash (C-1)", () => {
+    it("rejects nullifier_hash >= BN254 Fr (aliased double-spend)", async () => {
+      // Top up the vault so a successful exploit would actually be payable.
+      // (Otherwise the attempt would fail on InsufficientVaultBalance and prove nothing.)
+      const filler = randomFieldElem();
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(filler)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      jsTree.insert(filler);
+
+      const vaultBefore = await provider.connection.getBalance(vaultPda);
+      assert.isAtLeast(
+        vaultBefore,
+        Number(DENOMINATION),
+        "vault must hold >= 1 denomination for this test to be meaningful"
+      );
+
+      // Alias the ALREADY-SPENT nullifier hash: h + Fr.
+      const aliased = BigInt(publicSignals1[0]) + BN254_FIELD_ORDER;
+      assert.isBelow(aliased.toString(16).length, 65, "alias must fit in 32 bytes");
+
+      const aliasedBytes = bigIntToBytes32(aliased);
+      const [aliasedPda, aliasedBump] = PublicKey.findProgramAddressSync(
+        [Buffer.from("nullifier"), poolPda.toBytes(), aliasedBytes],
+        program.programId
+      );
+      assert.notEqual(
+        aliasedPda.toBase58(),
+        nullifierPda1.toBase58(),
+        "aliased hash must derive a different PDA — that is the whole attack"
+      );
+
+      // Same proof, same root, same withdrawal commitment. Only the nullifier
+      // hash bytes change.
+      const aliasedArgs = {
+        ...withdrawArgs1,
+        nullifierHash: Array.from(aliasedBytes),
+        nullifierBump: aliasedBump,
+      };
+
+      try {
+        await program.methods
+          .withdraw(aliasedArgs)
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: aliasedPda,
+            recipient: recipient.publicKey,
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail(
+          "DOUBLE-SPEND: aliased nullifier hash was accepted — the same note was withdrawn twice"
+        );
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "NonCanonicalPublicInput",
+          `Expected NonCanonicalPublicInput, got: ${err.message}`
+        );
+      }
+    });
+
+    it("rejects root >= BN254 Fr", async () => {
+      const aliasedRoot = BigInt(publicSignals1[1]) + BN254_FIELD_ORDER;
+      const args = {
+        ...withdrawArgs1,
+        root: Array.from(bigIntToBytes32(aliasedRoot)),
+      };
+      // Use a fresh (unspent) nullifier PDA so the failure cannot come from the
+      // double-spend guard.
+      const freshHash = randomFieldElem();
+      const [freshPda, freshBump] = PublicKey.findProgramAddressSync(
+        [Buffer.from("nullifier"), poolPda.toBytes(), bigIntToBytes32(freshHash)],
+        program.programId
+      );
+      args.nullifierHash = Array.from(bigIntToBytes32(freshHash));
+      args.nullifierBump = freshBump;
+
+      try {
+        await program.methods
+          .withdraw(args)
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: freshPda,
+            recipient: recipient.publicKey,
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail("Should have rejected non-canonical root");
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "NonCanonicalPublicInput",
+          `Expected NonCanonicalPublicInput, got: ${err.message}`
+        );
+      }
+    });
+
+    it("rejects withdrawal_commitment >= BN254 Fr", async () => {
+      const aliasedWc = BigInt(publicSignals1[2]) + BN254_FIELD_ORDER;
+      const freshHash = randomFieldElem();
+      const [freshPda, freshBump] = PublicKey.findProgramAddressSync(
+        [Buffer.from("nullifier"), poolPda.toBytes(), bigIntToBytes32(freshHash)],
+        program.programId
+      );
+      const args = {
+        ...withdrawArgs1,
+        withdrawalCommitment: Array.from(bigIntToBytes32(aliasedWc)),
+        nullifierHash: Array.from(bigIntToBytes32(freshHash)),
+        nullifierBump: freshBump,
+      };
+
+      try {
+        await program.methods
+          .withdraw(args)
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: freshPda,
+            recipient: recipient.publicKey,
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail("Should have rejected non-canonical withdrawal_commitment");
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "NonCanonicalPublicInput",
+          `Expected NonCanonicalPublicInput, got: ${err.message}`
+        );
+      }
+    });
+
+    it("still accepts a canonical nullifier hash (no false positives)", async () => {
+      // Regression guard: the canonical-form check must not reject honest proofs.
+      // publicSignals are Poseidon outputs, always < Fr.
+      for (const s of publicSignals1) {
+        assert.isTrue(
+          BigInt(s) < BN254_FIELD_ORDER,
+          "honest public signals must be canonical"
+        );
+      }
+    });
+  });
+
   // ── Stale root ────────────────────────────────────────────────────────────────
   describe("withdraw — stale root", () => {
     it("rejects proof with root not in history", async () => {

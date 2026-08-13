@@ -48,4 +48,6 @@ pub enum ErrorCode {
     InvalidSystemProgram,
     #[msg("vault has insufficient balance")]
     InsufficientVaultBalance,
+    #[msg("public input is not a canonical BN254 field element")]
+    NonCanonicalPublicInput,
 }
