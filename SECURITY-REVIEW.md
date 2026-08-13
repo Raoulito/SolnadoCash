@@ -400,13 +400,22 @@ shares one bucket, making the 5 submissions/minute limit a trivial global DoS; d
 IP rotation defeats it. → Configure `trust proxy` explicitly and key the submit limiter on the
 nullifier as well as the IP.
 
-**M-6 — Wrong rent constant, and nullifier rent is never reclaimable.**
-`relayer/src/fees.js:9` uses `2_039_280` (the rent for a 165-byte SPL token account); the actual
+**M-6 — Wrong rent constant.** — FIXED
+`relayer/src/fees.js:9` used `2_039_280` (the rent for a 165-byte SPL token account); the actual
 minimum for the 80-byte nullifier account is `(128 + 80) × 3480 × 2 = 1_447_680` **[verified]** —
-a 41% overcharge on that component. There is also no instruction to close spent nullifier
-accounts, so every withdrawal permanently locks ~0.0014 SOL. At scale this is the protocol's
-largest cost sink. → Fix the constant; add a `close_nullifier` instruction gated on age
-(the `slot` field is already stored, `state.rs:66`) that refunds the closer.
+a 41% overcharge on that component. Fixed by reading
+`getMinimumBalanceForRentExemption(80)` from the chain, cached per connection, with the correct
+constant as a fallback.
+
+> **Retraction.** An earlier revision of this section also recommended adding a `close_nullifier`
+> instruction, gated on age, to reclaim the ~0.0014 SOL each withdrawal locks. **That
+> recommendation was unsafe and is withdrawn.** The nullifier PDA *is* the double-spend guard, and
+> the deposit's leaf stays in the Merkle tree permanently — so a note holder can always generate a
+> fresh proof against a current root. Closing a spent nullifier account would re-enable withdrawal
+> of an already-spent note, converting a cost optimisation into a fund-loss bug. The rent is
+> permanent by design; that is the price of Solana's account model for an ever-growing nullifier
+> set. The only correct optimisation is to make the account as small as possible, which at 80 bytes
+> it already is.
 
 **M-7 — `circuits/build/` is gitignored while the setup script instructs you to commit it.**
 `.gitignore:15` excludes the directory that `trusted_setup.sh:186-193` says to `git add`. Net

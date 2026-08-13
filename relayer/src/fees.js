@@ -6,7 +6,12 @@
 
 const BASE_FEE = 5000;               // lamports per signature (Solana fixed)
 const COMPUTE_UNITS = 200_000;        // CU budget for withdraw tx (measured: ~100k, buffer 2x)
-const NULLIFIER_RENT = 2_039_280;     // ~0.002 SOL rent for nullifier PDA
+// Nullifier account: 8-byte discriminator + NullifierAccount (32+32+8) = 80 bytes.
+const NULLIFIER_ACCOUNT_SIZE = 80;
+// Fallback rent for 80 bytes: (128 + 80) * 3480 * 2 = 1_447_680 lamports.
+// The previous value (2_039_280) is the rent for a 165-byte SPL token account and
+// over-charged the user by ~41% on this component (M-6).
+const NULLIFIER_RENT = 1_447_680;
 const MARGIN = 1.5;                   // 50% margin on estimated gas cost
 const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000; // getRecentPrioritizationFees unit
 
@@ -50,6 +55,38 @@ export function priorityFeeLamports(priorityFeePerCU) {
   return Math.ceil((priorityFeePerCU * COMPUTE_UNITS) / MICRO_LAMPORTS_PER_LAMPORT);
 }
 
+// Rent is a cluster parameter, so read it from the chain rather than trusting a
+// hardcoded constant (M-6). Cached per connection: different clusters can differ,
+// and a process-wide cache would leak one cluster's value into another.
+const _nullifierRentByConnection = new WeakMap();
+
+/**
+ * Rent-exempt minimum for the nullifier account, in lamports.
+ *
+ * This cost is PERMANENT by design and must not be reclaimed: the nullifier PDA is
+ * the double-spend guard, and the deposit's leaf remains in the Merkle tree
+ * forever, so a note holder could always prove membership against a current root.
+ * Closing a spent nullifier account would therefore re-enable withdrawal of an
+ * already-spent note. (An earlier revision of SECURITY-REVIEW.md suggested adding a
+ * close_nullifier instruction to recover this rent — that recommendation was unsafe
+ * and has been retracted.)
+ *
+ * @param {import("@solana/web3.js").Connection} connection
+ * @returns {Promise<number>} lamports
+ */
+export async function getNullifierRent(connection) {
+  const cached = _nullifierRentByConnection.get(connection);
+  if (cached !== undefined) return cached;
+  let rent;
+  try {
+    rent = await connection.getMinimumBalanceForRentExemption(NULLIFIER_ACCOUNT_SIZE);
+  } catch {
+    rent = NULLIFIER_RENT;
+  }
+  _nullifierRentByConnection.set(connection, rent);
+  return rent;
+}
+
 /**
  * The relayer's real cost to submit one withdrawal, in lamports.
  * No margin — this is what an honest relayer should actually take.
@@ -59,7 +96,8 @@ export function priorityFeeLamports(priorityFeePerCU) {
  */
 export async function computeRelayerCost(connection) {
   const priorityFeePerCU = await getPriorityFeePerCU(connection);
-  return BASE_FEE + priorityFeeLamports(priorityFeePerCU) + NULLIFIER_RENT;
+  const rent = await getNullifierRent(connection);
+  return BASE_FEE + priorityFeeLamports(priorityFeePerCU) + rent;
 }
 
 /**
@@ -98,4 +136,11 @@ export function computeMinUserReceives(denomination, relayerFeeMax) {
   return denomination - treasuryFee - relayerFeeMax;
 }
 
-export { BASE_FEE, COMPUTE_UNITS, NULLIFIER_RENT, MARGIN, MICRO_LAMPORTS_PER_LAMPORT };
+export {
+  BASE_FEE,
+  COMPUTE_UNITS,
+  NULLIFIER_RENT,
+  NULLIFIER_ACCOUNT_SIZE,
+  MARGIN,
+  MICRO_LAMPORTS_PER_LAMPORT,
+};

@@ -5,6 +5,8 @@ import { strict as assert } from "node:assert";
 import {
   computeRelayerFeeMax,
   computeRelayerCost,
+  getNullifierRent,
+  NULLIFIER_ACCOUNT_SIZE,
   computeTreasuryFee,
   computeMinUserReceives,
   getPriorityFeePerCU,
@@ -123,6 +125,30 @@ describe("fees", () => {
       );
       // cost = 5000 + ceil(10000*200000/1e6) + 2039280 = 2046280; *1.5 = 3069420
       assert.equal(fee, Math.ceil((BASE_FEE + 2_000 + NULLIFIER_RENT) * MARGIN));
+    });
+  });
+
+  describe("getNullifierRent (M-6)", () => {
+    it("reads the rent-exempt minimum for 80 bytes from the chain", async () => {
+      let askedFor = null;
+      const mockConnection = {
+        getRecentPrioritizationFees: async () => [],
+        getMinimumBalanceForRentExemption: async (size) => {
+          askedFor = size;
+          return 1_447_680;
+        },
+      };
+      const rent = await getNullifierRent(mockConnection);
+      assert.equal(askedFor, NULLIFIER_ACCOUNT_SIZE);
+      assert.equal(NULLIFIER_ACCOUNT_SIZE, 80);
+      assert.equal(rent, 1_447_680);
+    });
+
+    it("fallback constant is the real 80-byte rent, not the SPL token figure", () => {
+      // (128 + 80) * 3480 * 2 = 1_447_680. The old value 2_039_280 is the rent for
+      // a 165-byte SPL token account and over-charged by ~41% on this component.
+      assert.equal(NULLIFIER_RENT, (128 + 80) * 3480 * 2);
+      assert.notEqual(NULLIFIER_RENT, 2_039_280);
     });
   });
 

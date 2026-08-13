@@ -17,7 +17,7 @@ import {
   getPriorityFeePerCU,
   priorityFeeLamports,
   BASE_FEE,
-  NULLIFIER_RENT,
+  getNullifierRent,
 } from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
@@ -258,7 +258,9 @@ export function createApp({ connection, relayerKeypair, programId }) {
       const feeMax = BigInt(relayerFeeMax || (await computeRelayerFeeMax(connection)));
       const priorityFeePerCU = await getPriorityFeePerCU(connection);
       const realCost = BigInt(
-        BASE_FEE + priorityFeeLamports(priorityFeePerCU) + NULLIFIER_RENT
+        BASE_FEE +
+          priorityFeeLamports(priorityFeePerCU) +
+          (await getNullifierRent(connection))
       );
       const actualFee = realCost < feeMax ? realCost : feeMax;
 
