@@ -729,6 +729,83 @@ async function verifyH3(program, provider, fx) {
   }
 }
 
+// ── H-5: Merkle tree verified against on-chain state ─────────────────────────
+async function verifyH5(program, provider, fx) {
+  console.log("\n── H-5: rebuilt Merkle tree verified against the chain ──");
+
+  // Exercise the SHIPPED SDK function against real devnet pool data, not a
+  // reimplementation. The SDK is ESM, so import it dynamically from this CJS script.
+  let sdk;
+  try {
+    sdk = await import("../sdk/dist/index.js");
+  } catch (err) {
+    record("H-5", "SDK dist importable (run: cd sdk && npm run build)", false, err.message);
+    return;
+  }
+  await sdk.initPoseidon();
+
+  const poolAccount = await provider.connection.getAccountInfo(fx.poolPda);
+  const leaves = fx.tree.layers[0];
+
+  const state = sdk.readPoolTreeState(poolAccount.data);
+  record(
+    "H-5",
+    "pool tree state decodes from real account data",
+    state.nextIndex === leaves.length && state.roots.length === 256,
+    `next_index=${state.nextIndex}, current_root_index=${state.currentRootIndex}`
+  );
+
+  // 1. The correct tree must verify.
+  const good = new sdk.MerkleTree(20);
+  for (const l of leaves) good.insert(l);
+  try {
+    const r = sdk.verifyTreeMatchesPool(good, poolAccount.data);
+    record(
+      "H-5",
+      "correctly rebuilt tree matches the on-chain root",
+      true,
+      `root found at history index ${r.rootIndex}, ${r.leafCount} leaves`
+    );
+  } catch (err) {
+    record("H-5", "correctly rebuilt tree matches the on-chain root", false, err.message);
+  }
+
+  // 2. A tree missing one deposit — the pruned/rate-limited RPC case — must be
+  //    caught with a precise count instead of producing an unusable proof.
+  const short = new sdk.MerkleTree(20);
+  for (const l of leaves.slice(0, -1)) short.insert(l);
+  try {
+    sdk.verifyTreeMatchesPool(short, poolAccount.data);
+    record("H-5", "incomplete tree is rejected", false, "verification wrongly passed");
+  } catch (err) {
+    record(
+      "H-5",
+      "incomplete tree is rejected with a precise count",
+      /recovered \d+ of \d+ on-chain deposits/.test(err.message),
+      err.message.slice(0, 90)
+    );
+  }
+
+  // 3. Right leaf count, wrong order → root mismatch must be caught.
+  if (leaves.length >= 2) {
+    const swapped = new sdk.MerkleTree(20);
+    const reordered = [...leaves];
+    [reordered[0], reordered[1]] = [reordered[1], reordered[0]];
+    for (const l of reordered) swapped.insert(l);
+    try {
+      sdk.verifyTreeMatchesPool(swapped, poolAccount.data);
+      record("H-5", "out-of-order tree is rejected", false, "verification wrongly passed");
+    } catch (err) {
+      record(
+        "H-5",
+        "out-of-order tree is rejected",
+        /does not match any of the last 256/.test(err.message),
+        err.message.slice(0, 70)
+      );
+    }
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -778,6 +855,10 @@ async function main() {
     );
   }
 
+  if (wanted("H-5")) {
+    console.log("\nPreparing fixture for H-5...");
+    await verifyH5(program, provider, await setupFixture(program, provider));
+  }
   if (wanted("H-3")) {
     console.log("\nPreparing fixture for H-3...");
     await verifyH3(program, provider, await setupFixture(program, provider));

@@ -184,6 +184,100 @@ export class MerkleTree {
   }
 }
 
+// ── Pool tree state / verification (H-5) ────────────────────────────────────
+
+export const ROOT_HISTORY_SIZE = 256;
+
+// Offsets into the raw Pool account data, including the 8-byte Anchor
+// discriminator. Must match programs/solnadocash/src/state.rs.
+const POOL_NEXT_INDEX_OFFSET = 8 + 80;
+const POOL_CURRENT_ROOT_INDEX_OFFSET = 8 + 128;
+const POOL_ROOT_HISTORY_OFFSET = 8 + 136;
+const POOL_MIN_LEN = POOL_ROOT_HISTORY_OFFSET + ROOT_HISTORY_SIZE * 32;
+
+export interface PoolTreeState {
+  /** Number of leaves inserted on-chain. */
+  nextIndex: number;
+  /** Index of the newest root in the ring buffer. */
+  currentRootIndex: number;
+  /** The 256-entry root ring buffer, as field elements (0 = unused slot). */
+  roots: bigint[];
+}
+
+function readU64LE(data: Uint8Array, offset: number): number {
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(data[offset + i]);
+  return Number(v);
+}
+
+/** Decode the Merkle-relevant fields of a raw Pool account. */
+export function readPoolTreeState(poolData: Uint8Array): PoolTreeState {
+  if (poolData.length < POOL_MIN_LEN) {
+    throw new Error(
+      `Pool account too small: ${poolData.length} bytes, expected >= ${POOL_MIN_LEN}`
+    );
+  }
+  const roots: bigint[] = [];
+  for (let i = 0; i < ROOT_HISTORY_SIZE; i++) {
+    const start = POOL_ROOT_HISTORY_OFFSET + i * 32;
+    let v = 0n;
+    for (let j = 0; j < 32; j++) v = (v << 8n) | BigInt(poolData[start + j]);
+    roots.push(v);
+  }
+  return {
+    nextIndex: readU64LE(poolData, POOL_NEXT_INDEX_OFFSET),
+    currentRootIndex: readU64LE(poolData, POOL_CURRENT_ROOT_INDEX_OFFSET),
+    roots,
+  };
+}
+
+/**
+ * Verify a locally rebuilt tree against on-chain pool state (H-5).
+ *
+ * A tree rebuilt from transaction logs is silently wrong whenever a deposit is
+ * missed — public RPC endpoints prune history and rate-limit, so this is a
+ * question of when, not if. An unverified tree produces a proof against a root the
+ * chain never had: the withdrawal fails with RootNotFound or InvalidProof and the
+ * UI tells the user to "try again", which never converges.
+ *
+ * Two independent checks:
+ *  - leaf count must equal pool.next_index (catches missing or extra leaves, and
+ *    gives a precise "N of M deposits recovered" diagnostic)
+ *  - the tree root must appear in the on-chain root history (the authoritative
+ *    check: this is exactly what the program enforces at withdrawal time)
+ *
+ * Call this BEFORE generating a proof.
+ *
+ * @throws with an actionable message if the tree does not match the chain.
+ */
+export function verifyTreeMatchesPool(
+  tree: MerkleTree,
+  poolData: Uint8Array
+): { root: bigint; leafCount: number; rootIndex: number } {
+  const state = readPoolTreeState(poolData);
+  const leafCount = tree.nextIndex;
+
+  if (leafCount !== state.nextIndex) {
+    throw new Error(
+      `Merkle tree is incomplete: recovered ${leafCount} of ${state.nextIndex} ` +
+        `on-chain deposits. The RPC endpoint is missing deposit history ` +
+        `(pruned or rate-limited) — retry with a different or archival RPC.`
+    );
+  }
+
+  const root = tree.root;
+  const rootIndex = state.roots.findIndex((r) => r === root);
+  if (rootIndex === -1) {
+    throw new Error(
+      `Rebuilt Merkle root does not match any of the last ${ROOT_HISTORY_SIZE} ` +
+        `on-chain roots. The recovered deposits are wrong or out of order — ` +
+        `do not submit: the proof would be rejected on-chain.`
+    );
+  }
+
+  return { root, leafCount, rootIndex };
+}
+
 // ── Proof generation ────────────────────────────────────────────────────────
 
 /**

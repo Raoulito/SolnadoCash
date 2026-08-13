@@ -4,7 +4,7 @@
 
 import { Connection, PublicKey } from '@solana/web3.js';
 import { BorshCoder, EventParser } from '@coral-xyz/anchor';
-import { initPoseidon, MerkleTree } from '@solnadocash/sdk';
+import { initPoseidon, MerkleTree, verifyTreeMatchesPool } from '@solnadocash/sdk';
 import IDL from '../idl/solnadocash.json';
 import { PROGRAM_ID } from '../config';
 
@@ -12,6 +12,9 @@ interface DepositEventData {
   leaf: number[];
   leafIndex: bigint;
 }
+
+/** How many getTransaction calls to issue concurrently. */
+const FETCH_CONCURRENCY = 8;
 
 /**
  * Convert a 32-byte big-endian array to bigint.
@@ -22,15 +25,40 @@ function bytesToBigInt(bytes: number[]): bigint {
   return v;
 }
 
+/** Map with bounded concurrency, preserving input order. */
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+  onDone?: (completed: number, total: number) => void
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let completed = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+      completed++;
+      onDone?.(completed, items.length);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 /**
  * Fetch all DepositEvent logs for a pool and rebuild the Merkle tree.
  *
- * This fetches every transaction involving the pool PDA, extracts
- * DepositEvent events (Anchor CPI events), sorts by leaf_index,
- * and inserts each commitment into a fresh MerkleTree.
+ * The result is verified against on-chain pool state before it is returned
+ * (H-5): a tree rebuilt from transaction logs is silently wrong whenever a
+ * deposit is missed, and public RPC endpoints prune history and rate-limit. An
+ * unverified tree yields a proof against a root the chain never had, which fails
+ * as RootNotFound/InvalidProof and cannot be recovered by retrying.
  *
- * For devnet beta with few deposits this is fast. For production
- * with thousands of deposits, consider an off-chain indexer.
+ * For production, replace log scanning with an indexer — this is O(deposits) RPC
+ * round-trips.
  */
 export async function rebuildMerkleTree(
   connection: Connection,
@@ -43,7 +71,15 @@ export async function rebuildMerkleTree(
   const coder = new BorshCoder(IDL as never);
   const eventParser = new EventParser(programId, coder);
 
-  // Fetch all signatures for the pool (paginated, oldest first)
+  // Read pool state first so the rebuild can be checked against it.
+  const poolAccount = await connection.getAccountInfo(poolAddress);
+  if (!poolAccount) {
+    throw new Error(
+      'Pool account not found on-chain. Check the pool address in your note.'
+    );
+  }
+
+  // Fetch all signatures for the pool (paginated, newest first)
   const allSignatures = [];
   let before: string | undefined;
   // eslint-disable-next-line no-constant-condition
@@ -61,31 +97,32 @@ export async function rebuildMerkleTree(
   // Reverse to chronological order (oldest first)
   allSignatures.reverse();
 
-  // Parse deposit events from each transaction
+  // Parse deposit events. Fetched concurrently — one sequential round-trip per
+  // signature is unusably slow and trips rate limits well before the pool's
+  // advertised capacity.
+  const successful = allSignatures.filter((s) => !s.err);
+  const txs = await mapPool(
+    successful,
+    FETCH_CONCURRENCY,
+    (sig) =>
+      connection.getTransaction(sig.signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      }),
+    onProgress
+  );
+
   const deposits: { leaf: number[]; leafIndex: number }[] = [];
-
-  for (let i = 0; i < allSignatures.length; i++) {
-    const sig = allSignatures[i];
-    if (sig.err) continue; // Skip failed transactions
-
-    const tx = await connection.getTransaction(sig.signature, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    });
+  for (const tx of txs) {
     if (!tx?.meta?.logMessages) continue;
-
     for (const event of eventParser.parseLogs(tx.meta.logMessages)) {
-      if (event.name === 'DepositEvent') {
+      if (event.name === 'DepositEvent' || event.name === 'depositEvent') {
         const data = event.data as unknown as DepositEventData;
         deposits.push({
           leaf: Array.from(data.leaf),
           leafIndex: Number(data.leafIndex),
         });
       }
-    }
-
-    if (onProgress) {
-      onProgress(i + 1, allSignatures.length);
     }
   }
 
@@ -95,9 +132,12 @@ export async function rebuildMerkleTree(
   // Build the Merkle tree
   const tree = new MerkleTree(20);
   for (const deposit of deposits) {
-    const leafBigInt = bytesToBigInt(deposit.leaf);
-    tree.insert(leafBigInt);
+    tree.insert(bytesToBigInt(deposit.leaf));
   }
+
+  // Authoritative check: leaf count and root must agree with the chain.
+  // Throws with an actionable message if they do not.
+  verifyTreeMatchesPool(tree, poolAccount.data);
 
   return tree;
 }

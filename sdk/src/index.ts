@@ -9,11 +9,15 @@ export {
   pubkeyToField,
   MerkleTree,
   generateWithdrawProof,
+  readPoolTreeState,
+  verifyTreeMatchesPool,
+  ROOT_HISTORY_SIZE,
 } from "./proof.js";
 export type {
   Groth16Proof,
   MerkleProofData,
   CircuitPaths,
+  PoolTreeState,
 } from "./proof.js";
 
 // FeeQuote is defined in both proof.ts and fees.ts (same shape).
