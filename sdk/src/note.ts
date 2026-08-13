@@ -49,11 +49,31 @@ function secureRandomBytes(length: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * Uniform random element of the BN254 scalar field (L-1).
+ *
+ * The previous implementation returned `random256Bits % Fr`, which is biased: with
+ * 2^256 = 5*Fr + r, the r values below the remainder are reachable 6 ways while the
+ * rest are reachable 5, so the low ~29% of the field is 20% more likely. That leaves
+ * ~253.7 bits of entropy rather than ~254 — not exploitable, but the wrong shape for
+ * the value that secures the deposit, and free to fix.
+ *
+ * Rejection sampling instead: draw 32 bytes, discard anything >= Fr, retry. Fr is
+ * ~0.19 of 2^256, so the rejection probability per draw is ~19% and the expected
+ * number of draws is ~1.23. The loop is bounded purely to make an impossible RNG
+ * failure loud rather than infinite.
+ */
 function randomFieldElement(): bigint {
-  const bytes = secureRandomBytes(32);
-  let n = 0n;
-  for (const b of bytes) n = (n << 8n) | BigInt(b);
-  return n % BN254_FIELD_ORDER;
+  for (let attempt = 0; attempt < 128; attempt++) {
+    const bytes = secureRandomBytes(32);
+    let n = 0n;
+    for (const b of bytes) n = (n << 8n) | BigInt(b);
+    if (n < BN254_FIELD_ORDER) return n;
+  }
+  // P(reaching here with a working RNG) < 0.19^128 ≈ 10^-92.
+  throw new Error(
+    "Failed to sample a field element in 128 attempts — the random number generator is broken"
+  );
 }
 
 function bigintToHex64(n: bigint): string {

@@ -24,11 +24,17 @@ function secureRandomBytes(length) {
     return bytes;
 }
 function randomFieldElement() {
-    const bytes = secureRandomBytes(32);
-    let n = 0n;
-    for (const b of bytes)
-        n = (n << 8n) | BigInt(b);
-    return n % BN254_FIELD_ORDER;
+    // L-1: rejection sampling, not `random256 % Fr`. The modulo version over-weighted
+    // the low ~29% of the field by 20% (6 preimages vs 5). ~19% rejection rate.
+    for (let attempt = 0; attempt < 128; attempt++) {
+        const bytes = secureRandomBytes(32);
+        let n = 0n;
+        for (const b of bytes)
+            n = (n << 8n) | BigInt(b);
+        if (n < BN254_FIELD_ORDER)
+            return n;
+    }
+    throw new Error("Failed to sample a field element in 128 attempts — the random number generator is broken");
 }
 function bigintToHex64(n) {
     return n.toString(16).padStart(64, "0");
