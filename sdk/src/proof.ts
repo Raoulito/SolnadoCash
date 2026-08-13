@@ -62,12 +62,30 @@ export function poseidonHash(...inputs: bigint[]): bigint {
 
 // ── Pubkey → field element ──────────────────────────────────────────────────
 
-/** Reduce a Solana pubkey (256 bits) to a BN254 Fr field element. */
+/**
+ * Map a Solana pubkey to a single BN254 field element.
+ *
+ * MUST match `pubkey_to_field` in programs/solnadocash/src/withdraw.rs exactly,
+ * or the on-chain withdrawal-commitment check rejects every proof.
+ *
+ * The pubkey is split into its two 128-bit halves (both < 2^128 < Fr) and hashed.
+ * The previous encoding was `pubkey mod Fr`, which is not injective: 81% of
+ * addresses have a distinct alias `R + Fr` with the same field element, letting a
+ * malicious relayer redirect a withdrawal to an unspendable address (H-2). Under
+ * this encoding a collision requires ~2^127 work.
+ *
+ * The encoding is outside the circuit — `recipient` and `relayerAddress` are
+ * opaque field elements to withdraw.circom — so it is not part of the trusted
+ * setup and can be changed without a new ceremony.
+ */
 export function pubkeyToField(pk: PublicKey): bigint {
   const bytes = pk.toBytes();
-  let v = 0n;
-  for (const b of bytes) v = (v << 8n) | BigInt(b);
-  return v % BN254_FIELD_ORDER;
+  let hi = 0n;
+  let lo = 0n;
+  for (let i = 0; i < 16; i++) hi = (hi << 8n) | BigInt(bytes[i]);
+  for (let i = 16; i < 32; i++) lo = (lo << 8n) | BigInt(bytes[i]);
+  if (!_poseidon) throw new Error("Call initPoseidon() first");
+  return poseidonHash(hi, lo);
 }
 
 // ── Incremental Merkle Tree ─────────────────────────────────────────────────

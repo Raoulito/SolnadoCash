@@ -68,41 +68,37 @@ const BN254_FR: [u8; 32] = [
     0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
 
-/// Reduce a 32-byte big-endian value mod BN254_Fr.
-/// Solana pubkey bytes interpreted as big-endian can be up to 2^256-1.
-/// Since 2^256 / Fr ≈ 5.29, we need at most 5 subtractions.
-fn reduce_mod_fr(bytes: &[u8]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out.copy_from_slice(bytes);
-    for _ in 0..5 {
-        let mut ge = true;
-        for i in 0..32 {
-            if out[i] < BN254_FR[i] {
-                ge = false;
-                break;
-            } else if out[i] > BN254_FR[i] {
-                break;
-            }
-        }
-        if !ge {
-            return out;
-        }
-        // Subtract Fr (big-endian)
-        let mut borrow: u16 = 0;
-        let prev = out;
-        for i in (0..32).rev() {
-            let a = prev[i] as u16;
-            let b = BN254_FR[i] as u16 + borrow;
-            if a >= b {
-                out[i] = (a - b) as u8;
-                borrow = 0;
-            } else {
-                out[i] = (256 + a - b) as u8;
-                borrow = 1;
-            }
-        }
-    }
-    out
+/// Map a 32-byte Solana pubkey to a single BN254 field element (H-2).
+///
+/// The previous encoding was `pubkey mod Fr`. Because pubkeys are 256-bit and Fr is
+/// ~254-bit, that map is NOT injective: 81% of addresses have a distinct 32-byte
+/// alias (`R + Fr`) reducing to the same element. Since the withdrawal commitment
+/// binds only the field element, a malicious relayer could pass the alias in the
+/// recipient slot — the commitment check still passed, the nullifier was consumed,
+/// the relayer kept its fee, and the user's funds landed at an address for which
+/// nobody can produce a signature. An irreversible burn.
+///
+/// The pubkey is now split into its two 128-bit halves (a bijection, both halves
+/// are < 2^128 < Fr) and hashed. Finding two addresses with the same field element
+/// therefore requires a Poseidon collision (~2^127) rather than one addition.
+///
+/// This encoding lives entirely OUTSIDE the circuit — `withdraw.circom` consumes
+/// `recipient` and `relayerAddress` as opaque field elements — so changing it needs
+/// no circuit change, no new trusted setup, and does not invalidate existing notes.
+/// The off-chain prover (sdk/src/proof.ts) must use the identical encoding.
+fn pubkey_to_field(key: &Pubkey) -> Result<[u8; 32]> {
+    let b = key.as_ref();
+    let mut hi = [0u8; 32];
+    let mut lo = [0u8; 32];
+    hi[16..].copy_from_slice(&b[..16]);
+    lo[16..].copy_from_slice(&b[16..]);
+    Ok(hashv(
+        Parameters::Bn254X5,
+        Endianness::BigEndian,
+        &[&hi, &lo],
+    )
+    .map_err(|_| error!(ErrorCode::PoseidonFailed))?
+    .0)
 }
 
 /// Reject non-canonical field elements (C-1).
@@ -246,10 +242,10 @@ pub fn process_withdraw(
     verifier.verify().map_err(|_| error!(ErrorCode::InvalidProof))?;
 
     // 9. Verify withdrawal_commitment = Poseidon(relayer, relayer_fee_max, recipient)
-    //    Pubkey bytes (32 bytes big-endian) may exceed BN254_Fr, so we reduce mod Fr
-    //    before passing to sol_poseidon. Both on-chain and off-chain must agree.
-    let relayer_field = reduce_mod_fr(relayer_info.key.as_ref());
-    let recipient_field = reduce_mod_fr(recipient_info.key.as_ref());
+    //    Pubkeys are mapped to field elements with a collision-resistant encoding
+    //    (see pubkey_to_field) so the recipient cannot be swapped for an alias.
+    let relayer_field = pubkey_to_field(relayer_info.key)?;
+    let recipient_field = pubkey_to_field(recipient_info.key)?;
     let mut fee_max_bytes = [0u8; 32];
     fee_max_bytes[24..].copy_from_slice(&args.relayer_fee_max.to_be_bytes());
     let computed_commitment = hashv(
@@ -483,23 +479,63 @@ mod tests {
         );
     }
 
+    /// The H-2 attack precondition: under the old `pubkey mod Fr` encoding, R and
+    /// R + Fr collided. The split-and-hash encoding maps them to different field
+    /// elements, so the recipient can no longer be swapped for an alias.
+    ///
+    /// Runs off-chain only: `hashv` is available in the host build.
     #[test]
-    fn reduce_mod_fr_agrees_with_canonical_check() {
-        // Any value that reduce_mod_fr leaves untouched must be canonical, and
-        // vice versa. Guards against the two helpers drifting apart.
-        let cases = [
-            [0u8; 32],
-            be("1830ee67b5fb554ad5f63d4388800e1cfe78e310697d46e43c9ce36134f72cca"),
-            BN254_FR,
-            [0xffu8; 32],
-        ];
-        for c in cases {
-            let reduced = reduce_mod_fr(&c);
-            assert!(is_canonical_fr(&reduced), "reduction output must be canonical");
-            assert_eq!(
-                reduced == c,
-                is_canonical_fr(&c),
-                "reduce_mod_fr is the identity exactly on canonical inputs"
+    fn pubkey_encoding_separates_fr_aliases() {
+        // R and R + Fr — distinct 32-byte addresses, identical under mod-Fr.
+        let r = be("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let mut alias = r;
+        let mut carry = 0u16;
+        for i in (0..32).rev() {
+            let sum = alias[i] as u16 + BN254_FR[i] as u16 + carry;
+            alias[i] = (sum & 0xff) as u8;
+            carry = sum >> 8;
+        }
+        assert_eq!(carry, 0, "alias must fit in 32 bytes");
+        assert_ne!(r, alias, "alias must be a different address");
+
+        let fa = pubkey_to_field(&Pubkey::from(r)).unwrap();
+        let fb = pubkey_to_field(&Pubkey::from(alias)).unwrap();
+        assert_ne!(
+            fa, fb,
+            "R and R + Fr must map to different field elements"
+        );
+
+        // And the encoding output must itself be a canonical field element.
+        assert!(is_canonical_fr(&fa));
+        assert!(is_canonical_fr(&fb));
+    }
+
+    #[test]
+    fn pubkey_encoding_is_deterministic() {
+        let k = Pubkey::from(be(
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ));
+        assert_eq!(
+            pubkey_to_field(&k).unwrap(),
+            pubkey_to_field(&k).unwrap(),
+            "encoding must be deterministic"
+        );
+    }
+
+    #[test]
+    fn pubkey_encoding_is_sensitive_to_every_byte() {
+        // A one-bit change anywhere — including in the high half, which mod-Fr
+        // reduction could mask — must change the field element.
+        let base = [0u8; 32];
+        let f0 = pubkey_to_field(&Pubkey::from(base)).unwrap();
+        for i in [0usize, 15, 16, 31] {
+            let mut v = base;
+            v[i] = 1;
+            assert_ne!(
+                pubkey_to_field(&Pubkey::from(v)).unwrap(),
+                f0,
+                "byte {} must affect the encoding",
+                i
             );
         }
     }

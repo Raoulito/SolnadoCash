@@ -77,6 +77,15 @@ function pubkeyToBigInt(pk) {
   for (const b of pk.toBytes()) v = (v << 8n) | BigInt(b);
   return v;
 }
+// Map a pubkey to a field element. MUST match pubkey_to_field in withdraw.rs:
+// split into two 128-bit halves and hash (H-2). `pubkey mod Fr` was not injective.
+function pubkeyToField(pk) {
+  const b = pk.toBytes();
+  let hi = 0n, lo = 0n;
+  for (let i = 0; i < 16; i++) hi = (hi << 8n) | BigInt(b[i]);
+  for (let i = 16; i < 32; i++) lo = (lo << 8n) | BigInt(b[i]);
+  return poseidonHash(hi, lo);
+}
 function snarkjsProofToBytes(proof) {
   const proofA = Buffer.concat([
     bigIntToBytes32(BigInt(proof.pi_a[0])),
@@ -230,16 +239,9 @@ async function setupFixture(program, provider) {
   }
 
   // Relayer signs the withdrawal and pays nullifier rent.
-  // NOTE: relayer/recipient are generated in-field (< Fr) because the current
-  // commitment binds `pubkey mod Fr` — that lossy encoding is finding H-2 and is
-  // fixed in a later commit.
-  let relayer, recipient;
-  do {
-    relayer = Keypair.generate();
-  } while (pubkeyToBigInt(relayer.publicKey) >= BN254_FIELD_ORDER);
-  do {
-    recipient = Keypair.generate();
-  } while (pubkeyToBigInt(recipient.publicKey) >= BN254_FIELD_ORDER);
+  // Any address works: the pubkey->field encoding is collision-resistant (H-2).
+  const relayer = Keypair.generate();
+  const recipient = Keypair.generate();
 
   const fundRelayer = new anchor.web3.Transaction().add(
     SystemProgram.transfer({
@@ -312,8 +314,8 @@ async function setupFixture(program, provider) {
   const leafIndex = tree.layers[0].indexOf(note.commitment);
   const { pathElements, pathIndices, root } = tree.proof(leafIndex);
 
-  const relayerField = pubkeyToBigInt(relayer.publicKey) % BN254_FIELD_ORDER;
-  const recipientField = pubkeyToBigInt(recipient.publicKey) % BN254_FIELD_ORDER;
+  const relayerField = pubkeyToField(relayer.publicKey);
+  const recipientField = pubkeyToField(recipient.publicKey);
   const withdrawalCommitment = poseidonHash(
     relayerField,
     RELAYER_FEE_MAX,

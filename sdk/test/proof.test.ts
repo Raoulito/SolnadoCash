@@ -73,15 +73,52 @@ describe("T32 — sdk/src/proof.ts", function () {
       assert.equal(pubkeyToField(pk), pubkeyToField(pk));
     });
 
-    it("reduces pubkeys exceeding Fr", () => {
-      // Create a pubkey with all 0xFF bytes (exceeds Fr)
+    it("maps pubkeys exceeding Fr into the field without collision (H-2)", () => {
+      // Every pubkey, including ones >= Fr, maps into the field.
       const maxBytes = new Uint8Array(32).fill(0xff);
       const pk = new PublicKey(maxBytes);
       const field = pubkeyToField(pk);
-      assert.ok(field < BN254_FIELD_ORDER);
-      // 2^256 - 1 mod Fr
-      const expected = (2n ** 256n - 1n) % BN254_FIELD_ORDER;
-      assert.equal(field, expected);
+      assert.ok(field < BN254_FIELD_ORDER, "encoding must land in the field");
+
+      // The old encoding was `pubkey mod Fr`, under which R and R + Fr collided.
+      // The split-and-hash encoding must separate them.
+      const toBig = (k: PublicKey) => {
+        let v = 0n;
+        for (const b of k.toBytes()) v = (v << 8n) | BigInt(b);
+        return v;
+      };
+      const toBytes = (n: bigint) =>
+        new PublicKey(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
+
+      const base = Keypair.generate().publicKey;
+      const aliasInt = toBig(base) + BN254_FIELD_ORDER;
+      if (aliasInt < 1n << 256n) {
+        const alias = toBytes(aliasInt);
+        assert.equal(
+          (toBig(base) % BN254_FIELD_ORDER).toString(),
+          (toBig(alias) % BN254_FIELD_ORDER).toString(),
+          "precondition: old mod-Fr encoding collided"
+        );
+        assert.notEqual(
+          pubkeyToField(base).toString(),
+          pubkeyToField(alias).toString(),
+          "new encoding must separate R from R + Fr"
+        );
+      }
+    });
+
+    it("matches the on-chain encoding for a known key", () => {
+      // Cross-implementation vector: keep sdk, tests, scripts and the Rust
+      // program in agreement. Poseidon(hi, lo) over the two 128-bit halves.
+      const pk = new PublicKey(
+        Buffer.from(
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "hex"
+        )
+      );
+      const hi = 0x0102030405060708090a0b0c0d0e0f10n;
+      const lo = 0x1112131415161718191a1b1c1d1e1f20n;
+      assert.equal(pubkeyToField(pk), poseidonHash(hi, lo));
     });
   });
 

@@ -81,12 +81,27 @@ function bigIntToBytes32(n: bigint): Buffer {
 }
 
 // ── pubkeyToBigInt ────────────────────────────────────────────────────────────
-// Interpret Solana pubkey bytes as a big-endian unsigned integer.
+// Raw big-endian interpretation of the pubkey bytes. Only used by tests to
+// construct +Fr aliases and to demonstrate the old (broken) mod-Fr encoding.
 function pubkeyToBigInt(pk: PublicKey): bigint {
   const bytes = pk.toBytes();
   let v = 0n;
   for (const b of bytes) v = (v << 8n) | BigInt(b);
   return v;
+}
+
+// ── pubkeyToField ─────────────────────────────────────────────────────────────
+// Map a pubkey to a BN254 field element. MUST match pubkey_to_field in
+// programs/solnadocash/src/withdraw.rs: split into two 128-bit halves and hash.
+// The old `pubkey mod Fr` encoding was not injective (H-2), which let a relayer
+// swap the recipient for an unspendable alias.
+function pubkeyToField(pk: PublicKey): bigint {
+  const bytes = pk.toBytes();
+  let hi = 0n;
+  let lo = 0n;
+  for (let i = 0; i < 16; i++) hi = (hi << 8n) | BigInt(bytes[i]);
+  for (let i = 16; i < 32; i++) lo = (lo << 8n) | BigInt(bytes[i]);
+  return poseidonHash(hi, lo);
 }
 
 // ── snarkjsProofToBytes ───────────────────────────────────────────────────────
@@ -323,16 +338,12 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     // Generate until we get one that's in-field.
     let recipientBigInt: bigint;
     let relayerBigInt: bigint;
-    do {
-      recipient = Keypair.generate();
-      recipientBigInt = pubkeyToBigInt(recipient.publicKey);
-    } while (recipientBigInt >= BN254_FIELD_ORDER);
+    recipient = Keypair.generate();
+      recipientBigInt = pubkeyToField(recipient.publicKey);
 
     // Similarly for relayer
-    do {
-      relayer = Keypair.generate();
-      relayerBigInt = pubkeyToBigInt(relayer.publicKey);
-    } while (relayerBigInt >= BN254_FIELD_ORDER);
+    relayer = Keypair.generate();
+      relayerBigInt = pubkeyToField(relayer.publicKey);
 
     // Airdrop SOL
     for (const kp of [admin, relayer]) {
@@ -383,8 +394,8 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     const { pathElements, pathIndices, root } = jsTree.insert(note1.commitment);
 
     // Re-read to get current values (relayer might have been regenerated)
-    relayerBigInt = pubkeyToBigInt(relayer.publicKey);
-    recipientBigInt = pubkeyToBigInt(recipient.publicKey);
+    relayerBigInt = pubkeyToField(relayer.publicKey);
+    recipientBigInt = pubkeyToField(recipient.publicKey);
 
     // Compute withdrawal_commitment = Poseidon(relayer, relayerFeeMax, recipient)
     const withdrawalCommitment = poseidonHash(
@@ -716,14 +727,12 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
       const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
 
       let griefRecipient: Keypair;
-      do {
-        griefRecipient = Keypair.generate();
-      } while (pubkeyToBigInt(griefRecipient.publicKey) >= BN254_FIELD_ORDER);
+      griefRecipient = Keypair.generate();
 
       const wc = poseidonHash(
-        pubkeyToBigInt(relayer.publicKey),
+        pubkeyToField(relayer.publicKey),
         RELAYER_FEE_MAX,
-        pubkeyToBigInt(griefRecipient.publicKey)
+        pubkeyToField(griefRecipient.publicKey)
       );
 
       console.log("\n  [withdraw.ts] Generating ZK proof for H-1 griefing test...");
@@ -737,8 +746,8 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
           denomination: DENOMINATION.toString(),
           pathElements: pathElements.map((x) => x.toString()),
           pathIndices: pathIndices.map((x) => x.toString()),
-          recipient: pubkeyToBigInt(griefRecipient.publicKey).toString(),
-          relayerAddress: pubkeyToBigInt(relayer.publicKey).toString(),
+          recipient: pubkeyToField(griefRecipient.publicKey).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
           relayerFeeMax: RELAYER_FEE_MAX.toString(),
         },
         WITHDRAW_WASM,
@@ -881,6 +890,243 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     });
   });
 
+  // ── H-2: recipient substitution via field-element alias ──────────────────────
+  //
+  // The withdrawal commitment binds the recipient only through its field-element
+  // encoding. Under the old `pubkey mod Fr` encoding, R and R + Fr encoded
+  // identically, so a malicious relayer could pass R + Fr in the recipient slot:
+  // the commitment check passed, the nullifier was consumed, the relayer kept its
+  // fee, and the funds landed at an address nobody can sign for. An irreversible
+  // burn, possible for 81% of addresses.
+  describe("withdraw — aliased recipient substitution (H-2)", () => {
+    it("rejects a recipient whose field encoding was expected to collide", async () => {
+      // Pick a recipient whose +Fr alias still fits in 32 bytes (~81% of keys).
+      let victim: Keypair;
+      let alias: PublicKey;
+      for (;;) {
+        victim = Keypair.generate();
+        const aliasInt = pubkeyToBigInt(victim.publicKey) + BN254_FIELD_ORDER;
+        if (aliasInt < 1n << 256n) {
+          alias = new PublicKey(bigIntToBytes32(aliasInt));
+          break;
+        }
+      }
+
+      // Precondition: under the OLD encoding these two distinct addresses were
+      // indistinguishable. Under the new one they must differ.
+      const oldVictim = pubkeyToBigInt(victim.publicKey) % BN254_FIELD_ORDER;
+      const oldAlias = pubkeyToBigInt(alias) % BN254_FIELD_ORDER;
+      assert.equal(
+        oldVictim.toString(),
+        oldAlias.toString(),
+        "precondition: mod-Fr encoding collides for these two addresses"
+      );
+      assert.notEqual(
+        pubkeyToField(victim.publicKey).toString(),
+        pubkeyToField(alias).toString(),
+        "new encoding must separate the alias"
+      );
+
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToField(victim.publicKey)
+      );
+
+      console.log("\n  [withdraw.ts] Generating ZK proof for H-2 substitution test...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(victim.publicKey).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const [nPda, nBump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+      const args = buildWithdrawArgs(
+        res.proof,
+        res.publicSignals,
+        nBump,
+        RELAYER_FEE_MAX,
+        RELAYER_FEE_ACTUAL
+      );
+
+      // The attack: relayer swaps in the alias.
+      try {
+        await program.methods
+          .withdraw(args)
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: nPda,
+            recipient: alias, // ← substituted
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail(
+          "FUND BURN: aliased recipient accepted — funds sent to an unspendable address"
+        );
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "InvalidWithdrawalCommitment",
+          `Expected InvalidWithdrawalCommitment, got: ${err.message}`
+        );
+      }
+
+      // The alias must have received nothing, and the note must still be spendable
+      // by the intended recipient.
+      const aliasBal = await provider.connection.getBalance(alias);
+      assert.equal(aliasBal, 0, "alias must not have received any lamports");
+
+      const victimBefore = await provider.connection.getBalance(victim.publicKey);
+      await program.methods
+        .withdraw(args)
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: nPda,
+          recipient: victim.publicKey,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+      const victimAfter = await provider.connection.getBalance(victim.publicKey);
+      assert.equal(
+        victimAfter - victimBefore,
+        Number(DENOMINATION) - Number(TREASURY_FEE) - Number(RELAYER_FEE_ACTUAL),
+        "intended recipient must still be able to withdraw"
+      );
+      console.log("  [H-2] alias rejected, intended recipient paid in full");
+    });
+
+    it("accepts any recipient address, including non-canonical ones", async () => {
+      // The alternative fix (requiring recipient < Fr) would have rejected ~19% of
+      // all Solana addresses. This encoding has no such restriction — assert that
+      // an address >= Fr is a usable recipient.
+      let big: PublicKey | null = null;
+      for (let i = 0; i < 500 && !big; i++) {
+        const kp = Keypair.generate();
+        if (pubkeyToBigInt(kp.publicKey) >= BN254_FIELD_ORDER) big = kp.publicKey;
+      }
+      assert.ok(big, "should find a pubkey >= Fr within 500 tries");
+
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToField(big!)
+      );
+
+      console.log("\n  [withdraw.ts] Generating ZK proof for non-canonical recipient...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(big!).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const [nPda, nBump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+
+      const before = await provider.connection.getBalance(big!);
+      await program.methods
+        .withdraw(
+          buildWithdrawArgs(
+            res.proof,
+            res.publicSignals,
+            nBump,
+            RELAYER_FEE_MAX,
+            RELAYER_FEE_ACTUAL
+          )
+        )
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: nPda,
+          recipient: big!,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+      const after = await provider.connection.getBalance(big!);
+      assert.equal(
+        after - before,
+        Number(DENOMINATION) - Number(TREASURY_FEE) - Number(RELAYER_FEE_ACTUAL),
+        "a recipient with pubkey >= Fr must still be paid"
+      );
+      console.log("  [H-2] non-canonical recipient (pubkey >= Fr) paid in full");
+    });
+  });
+
   // ── Stale root ────────────────────────────────────────────────────────────────
   describe("withdraw — stale root", () => {
     it("rejects proof with root not in history", async () => {
@@ -902,13 +1148,11 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
 
       let recipientBigInt2: bigint;
       let recipient2: Keypair;
-      do {
-        recipient2 = Keypair.generate();
-        recipientBigInt2 = pubkeyToBigInt(recipient2.publicKey);
-      } while (recipientBigInt2 >= BN254_FIELD_ORDER);
+      recipient2 = Keypair.generate();
+      recipientBigInt2 = pubkeyToField(recipient2.publicKey);
 
       const withdrawalCommitment2 = poseidonHash(
-        pubkeyToBigInt(relayer.publicKey),
+        pubkeyToField(relayer.publicKey),
         RELAYER_FEE_MAX,
         recipientBigInt2
       );
@@ -924,7 +1168,7 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         pathElements: pathElements.map((x) => x.toString()),
         pathIndices: pathIndices.map((x) => x.toString()),
         recipient: recipientBigInt2.toString(),
-        relayerAddress: pubkeyToBigInt(relayer.publicKey).toString(),
+        relayerAddress: pubkeyToField(relayer.publicKey).toString(),
         relayerFeeMax: RELAYER_FEE_MAX.toString(),
       };
 
@@ -1005,13 +1249,11 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
       // Generate in-field recipient
       let recipientFee: Keypair;
       let recipientFeeBigInt: bigint;
-      do {
-        recipientFee = Keypair.generate();
-        recipientFeeBigInt = pubkeyToBigInt(recipientFee.publicKey);
-      } while (recipientFeeBigInt >= BN254_FIELD_ORDER);
+      recipientFee = Keypair.generate();
+      recipientFeeBigInt = pubkeyToField(recipientFee.publicKey);
 
       const withdrawalCommitmentFee = poseidonHash(
-        pubkeyToBigInt(relayer.publicKey),
+        pubkeyToField(relayer.publicKey),
         RELAYER_FEE_MAX,
         recipientFeeBigInt
       );
@@ -1027,7 +1269,7 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         pathElements: pathElements.map((x) => x.toString()),
         pathIndices: pathIndices.map((x) => x.toString()),
         recipient: recipientFeeBigInt.toString(),
-        relayerAddress: pubkeyToBigInt(relayer.publicKey).toString(),
+        relayerAddress: pubkeyToField(relayer.publicKey).toString(),
         relayerFeeMax: RELAYER_FEE_MAX.toString(),
       };
 
@@ -1099,13 +1341,11 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
 
       let recipientCU: Keypair;
       let recipientCUBigInt: bigint;
-      do {
-        recipientCU = Keypair.generate();
-        recipientCUBigInt = pubkeyToBigInt(recipientCU.publicKey);
-      } while (recipientCUBigInt >= BN254_FIELD_ORDER);
+      recipientCU = Keypair.generate();
+      recipientCUBigInt = pubkeyToField(recipientCU.publicKey);
 
       const wCommitmentCU = poseidonHash(
-        pubkeyToBigInt(relayer.publicKey),
+        pubkeyToField(relayer.publicKey),
         RELAYER_FEE_MAX,
         recipientCUBigInt
       );
@@ -1121,7 +1361,7 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         pathElements: pathElements.map((x) => x.toString()),
         pathIndices: pathIndices.map((x) => x.toString()),
         recipient: recipientCUBigInt.toString(),
-        relayerAddress: pubkeyToBigInt(relayer.publicKey).toString(),
+        relayerAddress: pubkeyToField(relayer.publicKey).toString(),
         relayerFeeMax: RELAYER_FEE_MAX.toString(),
       };
 

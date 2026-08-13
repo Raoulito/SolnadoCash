@@ -80,8 +80,15 @@ function pubkeyToBigInt(pk) {
   return v;
 }
 
+// MUST match pubkey_to_field in programs/solnadocash/src/withdraw.rs: split the
+// pubkey into two 128-bit halves and hash them (H-2). `pubkey mod Fr` was not
+// injective, which let a relayer redirect a withdrawal to an unspendable alias.
 function pubkeyToField(pk) {
-  return pubkeyToBigInt(pk) % BN254_FIELD_ORDER;
+  const b = pk.toBytes();
+  let hi = 0n, lo = 0n;
+  for (let i = 0; i < 16; i++) hi = (hi << 8n) | BigInt(b[i]);
+  for (let i = 16; i < 32; i++) lo = (lo << 8n) | BigInt(b[i]);
+  return poseidonHash(hi, lo);
 }
 
 // ── Incremental Merkle Tree ──────────────────────────────────────────────────
@@ -216,7 +223,7 @@ async function main() {
   const admin = Keypair.generate();
   const treasury = Keypair.generate();
 
-  // On-chain reduce_mod_fr handles any 32-byte pubkey (up to 5 subtractions of Fr).
+  // Any 32-byte pubkey works: pubkey_to_field is collision-resistant (H-2).
   const recipient = Keypair.generate();
   const relayer = Keypair.generate();
 
@@ -313,7 +320,7 @@ async function main() {
   const tree = new IncrementalMerkleTree(TREE_DEPTH);
   const { pathElements, pathIndices, root } = tree.insert(commitment);
 
-  // Reduce pubkeys mod Fr to match on-chain reduce_mod_fr
+  // Encode pubkeys to field elements, matching on-chain pubkey_to_field
   const relayerField = pubkeyToField(relayer.publicKey);
   const recipientField = pubkeyToField(recipient.publicKey);
   const withdrawalCommitment = poseidonHash(

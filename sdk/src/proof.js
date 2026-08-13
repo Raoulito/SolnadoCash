@@ -64,11 +64,19 @@ function poseidonHash(...inputs) {
 // ── Pubkey → field element ──────────────────────────────────────────────────
 /** Reduce a Solana pubkey (256 bits) to a BN254 Fr field element. */
 function pubkeyToField(pk) {
+    // MUST match pubkey_to_field in programs/solnadocash/src/withdraw.rs and
+    // pubkeyToField in proof.ts: split the pubkey into two 128-bit halves and
+    // hash them. `pubkey mod Fr` was not injective (H-2).
     const bytes = pk.toBytes();
-    let v = 0n;
-    for (const b of bytes)
-        v = (v << 8n) | BigInt(b);
-    return v % BN254_FIELD_ORDER;
+    let hi = 0n;
+    let lo = 0n;
+    for (let i = 0; i < 16; i++)
+        hi = (hi << 8n) | BigInt(bytes[i]);
+    for (let i = 16; i < 32; i++)
+        lo = (lo << 8n) | BigInt(bytes[i]);
+    if (!_poseidon)
+        throw new Error("Call initPoseidon() first");
+    return poseidonHash(hi, lo);
 }
 // ── Incremental Merkle Tree ─────────────────────────────────────────────────
 /**
