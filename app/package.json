@@ -4,9 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "build:sdk": "cd ../sdk && npm run build",
+    "dev": "npm run build:sdk && vite",
+    "build": "npm run build:sdk && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "npm run build:sdk && tsc --noEmit"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
