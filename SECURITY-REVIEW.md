@@ -9,11 +9,15 @@ marked **[verified]** below (dependency source inspection, numeric reproduction,
 pooled funds. One of them (C-1) requires no privileged position, no cryptography and no capital
 beyond a single deposit.
 
-> **Remediation status (updated during fixing).** C-1, H-1 and H-2 are FIXED, verified on a local
-> validator and against the deployed devnet program (18/18 devnet checks). C-2 and C-3 are
-> ACCEPTED RISKS for now at the owner's decision: the single-party ceremony and the live upgrade
-> authority are deliberate while the protocol is pre-launch and under repair; both must be
-> resolved before mainnet. Remaining: H-3, H-4, H-5, H-6 and the medium/low items.
+> **Remediation status (updated during fixing).** All six HIGH findings and the critical C-1 are
+> FIXED. Verified with 21 Rust unit tests, 29 local on-chain tests, 91 SDK tests, 21 relayer tests
+> and 25/25 on-chain checks against the deployed devnet program (`scripts/devnet_verify.js`).
+> C-2 and C-3 are ACCEPTED RISKS at the owner's decision: the single-party ceremony and the live
+> upgrade authority are deliberate while the protocol is pre-launch and under repair; both must be
+> resolved before mainnet. Remaining: the medium and low items.
+>
+> H-4/H-5/H-6 are client-side findings, so they carry unit tests and build verification rather
+> than on-chain proof — except H-5, whose verifier is exercised against live devnet pool data.
 
 | Severity | Count | IDs |
 |---|---|---|
@@ -258,7 +262,7 @@ addresses unusable as recipients (bad UX and a late-failing footgun), and wideni
 to five inputs would have forced a new ceremony for no additional security. Cost of the chosen fix
 is +3,249 CU (99,799 -> 103,048).
 
-### H-3 — Relayer fee is computed in the wrong unit: 10⁶× overcharge
+### H-3 — Relayer fee is computed in the wrong unit: 10⁶× overcharge — FIXED
 
 **File:** `relayer/src/fees.js:35-37`
 
@@ -292,7 +296,7 @@ matching `ComputeBudgetProgram.setComputeUnitPrice`; charge measured cost rather
 and add an on-chain guard such as `require!(args.relayer_fee_max <= pool_denomination / 50)`
 plus `require!(user_amount > 0)`.
 
-### H-4 — The confirmation screen shows a fabricated relayer fee
+### H-4 — The confirmation screen shows a fabricated relayer fee — FIXED
 
 **File:** `app/src/pages/Withdraw.tsx:351-354`
 
@@ -313,7 +317,7 @@ locally recomputed guaranteed minimum received; block the flow if
 denomination); show the fee actually taken on the success screen (that part already exists at
 `:473`).
 
-### H-5 — Merkle tree rebuilt from RPC history, unverified and unscalable → notes become unprovable
+### H-5 — Merkle tree rebuilt from RPC history, unverified and unscalable → notes become unprovable — FIXED (verification; indexer still needed)
 
 **File:** `app/src/utils/merkle.ts:40-103`
 
@@ -337,7 +341,7 @@ message; batch/parallelise fetches with `getSignaturesForAddress` + `getParsedTr
 cache leaves in IndexedDB keyed by pool and leaf index. Consider emitting leaves in a compact
 append-only on-chain account so the tree can be rebuilt from account state instead of logs.
 
-### H-6 — The relayer and the app together defeat the privacy the protocol exists to provide
+### H-6 — The relayer and the app together defeat the privacy the protocol exists to provide — FIXED (honest disclosure; not a protocol-level anonymity fix)
 
 **Files:** `app/src/config.ts:5`, `relayer/src/api.js:25-33`, `:220-224`
 
