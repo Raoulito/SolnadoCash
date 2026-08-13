@@ -54,4 +54,6 @@ pub enum ErrorCode {
     RelayerFeeMaxTooHigh,
     #[msg("fees would leave the user with nothing")]
     UserAmountZero,
+    #[msg("vault must not also be the recipient, treasury or relayer")]
+    DuplicateAccount,
 }

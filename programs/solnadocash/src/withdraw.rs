@@ -286,11 +286,15 @@ pub fn process_withdraw(
     // 11b. The user must actually receive something (H-3).
     require!(user_amount > 0, ErrorCode::UserAmountZero);
 
-    // 12. Fee invariant check
-    require!(
-        treasury_fee + args.relayer_fee_taken + user_amount == pool_denomination,
-        ErrorCode::FeeInvariantViolated
-    );
+    // 12. Account distinctness (M-2).
+    //
+    // The vault must not also be the recipient, treasury or relayer: those cases
+    // would net lamports back into the vault and make the conservation check below
+    // meaningless. Duplicate AccountInfos share a lamport cell, so this cannot be
+    // caught after the fact by arithmetic alone.
+    require!(*recipient_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    require!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    require!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
 
     // 13. Create nullifier PDA via System Program CPI (H-1)
     //
@@ -389,10 +393,40 @@ pub fn process_withdraw(
 
     // 15. Direct lamport mutation for SOL transfers (vault is program-owned PDA)
     require!(vault_info.lamports() >= pool_denomination, ErrorCode::InsufficientVaultBalance);
+
+    // Snapshot for the conservation check below (M-2). The previous "fee invariant"
+    // asserted treasury_fee + relayer_fee_taken + user_amount == denomination
+    // immediately after computing user_amount as that same difference — trivially
+    // true and therefore no protection at all. This instead checks the ledger.
+    let vault_before = vault_info.lamports();
+    let treasury_before = treasury_info.lamports();
+    let relayer_before = relayer_info.lamports();
+    let recipient_before = recipient_info.lamports();
+
     **vault_info.try_borrow_mut_lamports()? -= pool_denomination;
     **treasury_info.try_borrow_mut_lamports()? += treasury_fee;
     **relayer_info.try_borrow_mut_lamports()? += args.relayer_fee_taken;
     **recipient_info.try_borrow_mut_lamports()? += user_amount;
+
+    // Real invariant: the vault paid out exactly one denomination, and every
+    // credited account received exactly its share. Catches any future aliasing or
+    // arithmetic slip that the tautology could not.
+    require!(
+        vault_info.lamports() == vault_before - pool_denomination,
+        ErrorCode::FeeInvariantViolated
+    );
+    require!(
+        treasury_info.lamports() == treasury_before + treasury_fee,
+        ErrorCode::FeeInvariantViolated
+    );
+    require!(
+        relayer_info.lamports() == relayer_before + args.relayer_fee_taken,
+        ErrorCode::FeeInvariantViolated
+    );
+    require!(
+        recipient_info.lamports() == recipient_before + user_amount,
+        ErrorCode::FeeInvariantViolated
+    );
 
     // 16. Emit withdrawal event
     emit!(WithdrawalEvent {

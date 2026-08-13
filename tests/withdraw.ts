@@ -1254,6 +1254,194 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     });
   });
 
+  // ── M-2: real conservation invariant, not a tautology ───────────────────────
+  describe("withdraw — lamport conservation (M-2)", () => {
+    it("rejects the vault being passed as the recipient", async () => {
+      // Would net lamports back into the vault. The old "fee invariant" could not
+      // detect this because duplicate AccountInfos share a lamport cell.
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      // Commit to the vault as recipient so the commitment check passes and the
+      // distinctness guard is what actually rejects it.
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToField(vaultPda)
+      );
+      console.log("\n  [withdraw.ts] Generating ZK proof for M-2 vault-as-recipient...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(vaultPda).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const [pda, bump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+
+      try {
+        await program.methods
+          .withdraw(
+            buildWithdrawArgs(
+              res.proof,
+              res.publicSignals,
+              bump,
+              RELAYER_FEE_MAX,
+              RELAYER_FEE_ACTUAL
+            )
+          )
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: pda,
+            recipient: vaultPda, // ← vault as recipient
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail("Should have rejected the vault as recipient");
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "DuplicateAccount",
+          `Expected DuplicateAccount, got: ${err.message}`
+        );
+      }
+    });
+
+    it("conserves lamports exactly across an honest withdrawal", async () => {
+      // vault -denomination == treasury +fee + relayer +fee + recipient +amount
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      const r = Keypair.generate();
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToField(r.publicKey)
+      );
+      console.log("\n  [withdraw.ts] Generating ZK proof for M-2 conservation...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(r.publicKey).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const [pda, bump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+
+      const bal = (k: PublicKey) => provider.connection.getBalance(k);
+      const [v0, t0, r0] = await Promise.all([
+        bal(vaultPda),
+        bal(treasury.publicKey),
+        bal(r.publicKey),
+      ]);
+
+      await program.methods
+        .withdraw(
+          buildWithdrawArgs(
+            res.proof,
+            res.publicSignals,
+            bump,
+            RELAYER_FEE_MAX,
+            RELAYER_FEE_ACTUAL
+          )
+        )
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: pda,
+          recipient: r.publicKey,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+
+      const [v1, t1, r1] = await Promise.all([
+        bal(vaultPda),
+        bal(treasury.publicKey),
+        bal(r.publicKey),
+      ]);
+
+      assert.equal(v0 - v1, Number(DENOMINATION), "vault pays exactly one denomination");
+      assert.equal(t1 - t0, Number(TREASURY_FEE), "treasury receives exactly its fee");
+      assert.equal(
+        r1 - r0,
+        Number(DENOMINATION - TREASURY_FEE - RELAYER_FEE_ACTUAL),
+        "recipient receives exactly the user amount"
+      );
+      // Vault outflow equals the sum of all credits (relayer fee included).
+      assert.equal(
+        v0 - v1,
+        t1 - t0 + (r1 - r0) + Number(RELAYER_FEE_ACTUAL),
+        "no lamports created or destroyed"
+      );
+      console.log("  [M-2] lamport conservation verified across all four accounts");
+    });
+  });
+
   // ── Stale root ────────────────────────────────────────────────────────────────
   describe("withdraw — stale root", () => {
     it("rejects proof with root not in history", async () => {
