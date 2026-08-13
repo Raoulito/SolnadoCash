@@ -9,7 +9,13 @@ node_modules/
 .anchor/
 
 # ── ZK circuit build artifacts (large binaries, regenerable) ─────────────────
-circuits/build/
+# Exclude the CONTENTS, not the directory itself: git cannot re-include a file whose
+# parent directory is excluded, so "circuits/build/" would defeat the negation below.
+circuits/build/*
+# …but the verifying key must be committed: the relayer needs it to validate proofs
+# off-chain, and third parties need it to check that programs/…/vk.rs corresponds to
+# the circuit (M-7). It is ~3 KB of public data, not a secret.
+!circuits/build/withdraw_vk.json
 
 # ── Project documentation (private) ──────────────────────────────────────────
 CLAUDE.md

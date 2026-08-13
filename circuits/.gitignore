@@ -1,5 +1,10 @@
 node_modules/
-build/
+# Exclude build contents, not the directory: a negation cannot re-include a file
+# whose parent directory is excluded.
+build/*
+# The verifying key is committed — the relayer needs it and it lets anyone check
+# programs/solnadocash/src/vk.rs against the circuit (M-7).
+!build/withdraw_vk.json
 *.r1cs
 *.sym
 *_js/
