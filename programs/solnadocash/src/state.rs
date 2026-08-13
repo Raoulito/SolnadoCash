@@ -8,6 +8,14 @@ pub const ROOT_HISTORY_SIZE: usize = 256;
 pub const TREE_DEPTH: usize = 20;
 pub const SATURATION_THRESHOLD: u64 = 950_000;
 
+/// Root of a completely empty depth-20 tree: Poseidon(ZEROS[19], ZEROS[19]).
+/// Identical for every pool, which is why withdraw rejects it (L-5). Asserted
+/// against the runtime computation in tests below so it cannot drift from ZEROS.
+pub const EMPTY_TREE_ROOT: [u8; 32] = [
+    0x21, 0x34, 0xe7, 0x6a, 0xc5, 0xd2, 0x1a, 0xab, 0x18, 0x6c, 0x2b, 0xe1, 0xdd, 0x8f, 0x84, 0xee,
+    0x88, 0x0a, 0x1e, 0x46, 0xea, 0xf7, 0x12, 0xf9, 0xd3, 0x71, 0xb6, 0xdf, 0x22, 0x19, 0x1f, 0x3e,
+];
+
 // POOL_SIZE (without discriminator) = 32+32+8+1+8+32+1+1+1+1+8192+8+640 = 8957
 // With zero_copy, the on-disk layout must match the struct layout exactly.
 // We use repr(C) + explicit padding to ensure no surprises.
@@ -187,6 +195,32 @@ mod tests {
     fn unpaused_pool_does_not_reject_for_pause() {
         let pool = make_pool();
         assert_eq!(pool.is_paused, 0, "default pool should be unpaused");
+    }
+
+    // ── EMPTY_TREE_ROOT (L-5) ──────────────────────────────────────────────
+    #[test]
+    fn empty_tree_root_matches_zeros_table() {
+        // Must equal what initialize_pool computes, or withdraw would reject a
+        // legitimate root (or fail to reject the empty one).
+        let computed = hashv(
+            Parameters::Bn254X5,
+            Endianness::BigEndian,
+            &[&ZEROS[TREE_DEPTH - 1], &ZEROS[TREE_DEPTH - 1]],
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            computed, EMPTY_TREE_ROOT,
+            "EMPTY_TREE_ROOT has drifted from the ZEROS table"
+        );
+    }
+
+    #[test]
+    fn empty_tree_root_is_not_a_real_insert_root() {
+        // Any actual insertion must move the root away from the empty value.
+        let mut pool = make_pool();
+        let new_root = pool.insert([7u8; 32]).unwrap();
+        assert_ne!(new_root, EMPTY_TREE_ROOT);
     }
 
     // ── is_known_root ──────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ use anchor_lang::solana_program::{
 use solana_program::poseidon::{hashv, Endianness, Parameters};
 use groth16_solana::groth16::Groth16Verifier;
 
-use crate::state::{NullifierAccount, NULLIFIER_SIZE, ROOT_HISTORY_SIZE};
+use crate::state::{NullifierAccount, NULLIFIER_SIZE, ROOT_HISTORY_SIZE, EMPTY_TREE_ROOT};
 use crate::error::ErrorCode;
 use crate::vk::WITHDRAW_VK;
 use crate::events::WithdrawalEvent;
@@ -239,7 +239,14 @@ pub fn process_withdraw(
     // 4. Verify treasury matches pool
     require!(*treasury_info.key == pool_treasury, ErrorCode::InvalidTreasury);
 
-    // 5. Verify root is recent (scan root_history in-place, no stack allocation)
+    // 5. Verify root is recent (scan root_history in-place, no stack allocation).
+    //
+    // The empty-tree root is rejected outright (L-5). It is seeded into slot 0 of
+    // every pool at creation and is byte-identical across every pool of depth 20, so
+    // it is the one root that carries no pool-specific meaning. No legitimate
+    // withdrawal can use it: a valid leaf in an empty tree would require a Poseidon
+    // preimage of zero. Cheap defence against ever making that assumption load-bearing.
+    require!(args.root != EMPTY_TREE_ROOT, ErrorCode::RootNotFound);
     let root_found = is_known_root_in_account(pool_info, &args.root)?;
     require!(root_found, ErrorCode::RootNotFound);
 
