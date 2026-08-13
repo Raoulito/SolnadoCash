@@ -4,7 +4,6 @@ use solana_program::poseidon::{hashv, Endianness, Parameters};
 use crate::error::ErrorCode;
 use crate::state::{TREE_DEPTH, ROOT_HISTORY_SIZE};
 use crate::zeros::ZEROS;
-use crate::withdraw::MAX_RELAYER_FEE_DIVISOR;
 use crate::InitializePool;
 
 pub fn handler(ctx: Context<InitializePool>, denomination: u64, version: u8) -> Result<()> {
@@ -28,14 +27,9 @@ pub fn handler(ctx: Context<InitializePool>, denomination: u64, version: u8) -> 
     // sysvar rather than a constant so it tracks cluster parameters.
     let rent = Rent::get()?;
     let min_recipient_balance = rent.minimum_balance(0);
-    let worst_case_user_amount = denomination
-        .checked_sub(denomination / 500) // treasury fee
-        .and_then(|x| x.checked_sub(denomination / MAX_RELAYER_FEE_DIVISOR)) // max relayer fee
+    let worst_case = crate::withdraw::worst_case_user_amount(denomination)
         .ok_or_else(|| error!(ErrorCode::DenominationTooLow))?;
-    require!(
-        worst_case_user_amount >= min_recipient_balance,
-        ErrorCode::DenominationTooLow
-    );
+    require!(worst_case >= min_recipient_balance, ErrorCode::DenominationTooLow);
 
     let mut pool = ctx.accounts.pool.load_init()?;
 

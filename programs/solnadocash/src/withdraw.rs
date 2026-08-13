@@ -17,6 +17,41 @@ use crate::events::WithdrawalEvent;
 /// unrepresentable on-chain (H-3).
 pub const MAX_RELAYER_FEE_DIVISOR: u64 = 50;
 
+/// Split a denomination into (treasury_fee, relayer_fee, user_amount), enforcing every
+/// fee rule. Pure so it can be property-tested directly (see proptests.rs) rather than
+/// through a mirrored copy that could silently drift from this logic.
+///
+/// Returns Err for any input the withdrawal must reject.
+pub fn compute_fee_split(
+    denomination: u64,
+    relayer_fee_taken: u64,
+    relayer_fee_max: u64,
+) -> Result<(u64, u64, u64)> {
+    require!(relayer_fee_taken <= relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
+    require!(
+        relayer_fee_max <= denomination / MAX_RELAYER_FEE_DIVISOR,
+        ErrorCode::RelayerFeeMaxTooHigh
+    );
+
+    let treasury_fee = denomination / 500;
+    let user_amount = denomination
+        .checked_sub(treasury_fee)
+        .and_then(|x| x.checked_sub(relayer_fee_taken))
+        .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
+    require!(user_amount > 0, ErrorCode::UserAmountZero);
+
+    Ok((treasury_fee, relayer_fee_taken, user_amount))
+}
+
+/// Worst-case amount a recipient receives: both fees at their maximum. Used by
+/// initialize_pool to reject denominations whose payout could not clear the runtime's
+/// rent floor for a fresh account (N-3).
+pub fn worst_case_user_amount(denomination: u64) -> Option<u64> {
+    denomination
+        .checked_sub(denomination / 500)
+        .and_then(|x| x.checked_sub(denomination / MAX_RELAYER_FEE_DIVISOR))
+}
+
 // Account indices (MUST match lib.rs WithdrawShim order)
 const IDX_POOL: usize = 0;
 const IDX_VAULT: usize = 1;
@@ -70,7 +105,7 @@ fn is_known_root_in_account(pool_info: &AccountInfo, root: &[u8; 32]) -> Result<
 /// Solana pubkeys are 32 bytes (256 bits) and can exceed this ~254-bit prime.
 /// sol_poseidon BN254X5 operates over Fr and rejects inputs >= Fr.
 /// Both the circom circuit and sol_poseidon must use the same field.
-const BN254_FR: [u8; 32] = [
+pub(crate) const BN254_FR: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
     0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
     0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91,
@@ -95,7 +130,7 @@ const BN254_FR: [u8; 32] = [
 /// `recipient` and `relayerAddress` as opaque field elements — so changing it needs
 /// no circuit change, no new trusted setup, and does not invalidate existing notes.
 /// The off-chain prover (sdk/src/proof.ts) must use the identical encoding.
-fn pubkey_to_field(key: &Pubkey) -> Result<[u8; 32]> {
+pub(crate) fn pubkey_to_field(key: &Pubkey) -> Result<[u8; 32]> {
     let b = key.as_ref();
     let mut hi = [0u8; 32];
     let mut lo = [0u8; 32];
@@ -127,7 +162,7 @@ fn pubkey_to_field(key: &Pubkey) -> Result<[u8; 32]> {
 /// Every public input is therefore required to be in canonical form (< Fr) before
 /// the proof is verified. Honest inputs are Poseidon outputs and always satisfy this.
 #[inline(always)]
-fn is_canonical_fr(be: &[u8; 32]) -> bool {
+pub(crate) fn is_canonical_fr(be: &[u8; 32]) -> bool {
     let mut i = 0;
     while i < 32 {
         if be[i] < BN254_FR[i] {
@@ -216,17 +251,17 @@ pub fn process_withdraw(
     // 2b. Fee sanity checks (H-3). Cheap arithmetic, so run them before the root
     // scan and Groth16 verification: an invalid fee request is rejected for a few
     // hundred CU instead of ~100k.
-    require!(args.relayer_fee_taken <= args.relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
-
     // Nothing previously bounded relayer_fee_max: a relayer could quote a ceiling
     // approaching the whole denomination and claim it, and a unit bug in the
     // reference relayer did exactly that. The protocol cannot read a gas oracle,
     // but it can refuse fees that are absurd relative to the denomination. 2% is
     // ~6.5x the real cost of a withdrawal on a 1 SOL pool at rest.
-    require!(
-        args.relayer_fee_max <= pool_denomination / MAX_RELAYER_FEE_DIVISOR,
-        ErrorCode::RelayerFeeMaxTooHigh
-    );
+    //
+    // compute_fee_split enforces fee_taken <= fee_max, the 2% cap, and user_amount > 0.
+    // Called here (before the root scan and Groth16 verify) so a bad fee costs a few
+    // hundred CU instead of ~100k.
+    let (treasury_fee, _, user_amount) =
+        compute_fee_split(pool_denomination, args.relayer_fee_taken, args.relayer_fee_max)?;
 
     // 3. Verify vault PDA
     let expected_vault = Pubkey::create_program_address(
@@ -285,16 +320,6 @@ pub fn process_withdraw(
         &[&relayer_field, &fee_max_bytes, &recipient_field],
     ).map_err(|_| error!(ErrorCode::PoseidonFailed))?.0;
     require!(computed_commitment == args.withdrawal_commitment, ErrorCode::InvalidWithdrawalCommitment);
-
-    // 11. Compute fees (treasury_fee = denomination / 500)
-    let treasury_fee = pool_denomination / 500;
-    let user_amount = pool_denomination
-        .checked_sub(treasury_fee)
-        .and_then(|x| x.checked_sub(args.relayer_fee_taken))
-        .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
-
-    // 11b. The user must actually receive something (H-3).
-    require!(user_amount > 0, ErrorCode::UserAmountZero);
 
     // 12. Account distinctness (M-2).
     //
