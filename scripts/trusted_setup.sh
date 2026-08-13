@@ -6,17 +6,16 @@
 #
 # Output:
 #   circuits/build/withdraw_final.zkey
-#   circuits/build/deposit_final.zkey
+
 #   circuits/build/withdraw_vk.json
-#   circuits/build/deposit_vk.json
 #
 # WARNING: DO NOT re-run after this script completes.
 # Re-running invalidates all existing proving/verifying keys.
 # Existing notes generated from old keys become unspendable.
 #
 # After completing:
-#   git add circuits/build/withdraw_final.zkey circuits/build/deposit_final.zkey
-#   git add circuits/build/withdraw_vk.json circuits/build/deposit_vk.json
+#   git add circuits/build/withdraw_final.zkey
+#   git add circuits/build/withdraw_vk.json   # already tracked (M-7)
 #   git tag trusted-setup-v1
 #   git push --tags
 #
@@ -113,35 +112,12 @@ snarkjs zkey verify \
     "$PTAU_FILE" \
     "$BUILD_DIR/withdraw_final.zkey"
 
-# ── Step 4: Phase 2 trusted setup — deposit circuit ──────────────────────────
-echo ""
-echo "=== Step 4: Deposit circuit trusted setup ==="
-
-echo "Phase 2 setup for deposit..."
-snarkjs groth16 setup \
-    "$BUILD_DIR/deposit.r1cs" \
-    "$PTAU_FILE" \
-    "$BUILD_DIR/deposit_0.zkey"
-
-echo "Contributing entropy..."
-snarkjs zkey contribute \
-    "$BUILD_DIR/deposit_0.zkey" \
-    "$BUILD_DIR/deposit_1.zkey" \
-    --name="SolnadoCash-Contributor1" \
-    -e="$(openssl rand -hex 32)"
-
-echo "Beacon finalisation..."
-snarkjs zkey beacon \
-    "$BUILD_DIR/deposit_1.zkey" \
-    "$BUILD_DIR/deposit_final.zkey" \
-    "$(openssl rand -hex 32)" \
-    10
-
-echo "Verifying deposit zkey..."
-snarkjs zkey verify \
-    "$BUILD_DIR/deposit.r1cs" \
-    "$PTAU_FILE" \
-    "$BUILD_DIR/deposit_final.zkey"
+# ── Step 4: (removed) deposit circuit ceremony ────────────────────────────────
+#
+# M-9: the deposit circuit is not used on-chain — the `deposit` instruction verifies
+# no proof. Generating a proving key for it produced a second set of toxic waste to
+# protect for no security benefit, so the ceremony step was removed. deposit.circom
+# is still compiled above for off-chain tests.
 
 # ── Step 5: Export verifying keys ─────────────────────────────────────────────
 echo ""
@@ -150,13 +126,8 @@ snarkjs zkey export verificationkey \
     "$BUILD_DIR/withdraw_final.zkey" \
     "$BUILD_DIR/withdraw_vk.json"
 
-snarkjs zkey export verificationkey \
-    "$BUILD_DIR/deposit_final.zkey" \
-    "$BUILD_DIR/deposit_vk.json"
-
-echo "Verifying keys exported to:"
+echo "Verifying key exported to:"
 echo "  $BUILD_DIR/withdraw_vk.json"
-echo "  $BUILD_DIR/deposit_vk.json"
 
 # ── Step 6: Generate Rust verifying key ───────────────────────────────────────
 echo ""
@@ -176,7 +147,6 @@ fi
 echo ""
 echo "=== Cleaning up intermediate zkeys ==="
 rm -f "$BUILD_DIR/withdraw_0.zkey" "$BUILD_DIR/withdraw_1.zkey"
-rm -f "$BUILD_DIR/deposit_0.zkey"  "$BUILD_DIR/deposit_1.zkey"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -185,18 +155,14 @@ echo " Trusted setup complete."
 echo ""
 echo " Files produced:"
 echo "   $BUILD_DIR/withdraw_final.zkey"
-echo "   $BUILD_DIR/deposit_final.zkey"
 echo "   $BUILD_DIR/withdraw_vk.json"
-echo "   $BUILD_DIR/deposit_vk.json"
 echo ""
 echo " IMPORTANT: these files are now frozen."
 echo " Any change to .circom files requires a new ceremony."
 echo ""
 echo " Next steps:"
 echo "   git add circuits/build/withdraw_final.zkey"
-echo "   git add circuits/build/deposit_final.zkey"
 echo "   git add circuits/build/withdraw_vk.json"
-echo "   git add circuits/build/deposit_vk.json"
 echo "   git add programs/solnadocash/src/vk.rs"
 echo "   git commit -m 'chore: trusted setup v1'"
 echo "   git tag trusted-setup-v1"
