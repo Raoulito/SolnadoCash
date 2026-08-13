@@ -462,7 +462,7 @@ plus a scan flow) or move it to `experimental/` and adjust the README.
 - **L-1** — FIXED. `randomFieldElement` used `randomBytes(32) % Fr` — modulo bias
   over-weights the low ~5.5% of the range by 20%. Harmless in practice, wrong for the protocol's
   most sensitive value. Use rejection sampling.
-- **L-2** Note secrecy depends on `vite-plugin-node-polyfills` shimming
+- **L-2** — FIXED. Note secrecy depended on `vite-plugin-node-polyfills` shimming
   `crypto.randomBytes` in the browser. It resolves to a CSPRNG today, but this is a bundler
   configuration standing between the user and their funds. Call
   `globalThis.crypto.getRandomValues` directly with a Node fallback.
@@ -470,9 +470,9 @@ plus a scan flow) or move it to `experimental/` and adjust the README.
   (one nullifier, one withdrawal). `MerkleTree.findLeaf` uses `indexOf`, returning the first
   match. Cheap 1:1 griefing and a plausible user footgun. Reject `commitment` already present, or
   at minimum warn.
-- **L-4** `WithdrawArgs.nullifier_bump` (`withdraw.rs:33`) is dead since the canonical-bump fix
+- **L-4** — FIXED. `WithdrawArgs.nullifier_bump` was dead since the canonical-bump fix
   but still occupies the wire format.
-- **L-5** The empty-tree root stays in `root_history[0]` and is byte-identical across every pool
+- **L-5** — FIXED. The empty-tree root stayed in `root_history[0]`, byte-identical across every pool
   of depth 20. Safe only because a Poseidon preimage of `0` is infeasible. Exclude it.
 - **L-6** — FIXED (docs). `POOL_SIZE` is 8 968 in code (confirmed 8 976 on-chain), was documented as 8 964 in `CLAUDE.md` (BF-39).
 - **L-7** — FIXED. `benchmark_groth16` / `benchmark_poseidon` were exposed unconditionally
