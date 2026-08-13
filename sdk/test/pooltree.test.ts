@@ -133,6 +133,24 @@ describe("H-5 — verifyTreeMatchesPool", function () {
     );
   });
 
+  // ── L-3: duplicate commitments ─────────────────────────────────────────────
+  it("detects duplicate leaves (L-3)", () => {
+    const tree = new MerkleTree(20);
+    tree.insert(100n);
+    tree.insert(200n);
+    tree.insert(100n); // same commitment deposited twice
+
+    assert.deepEqual(tree.findAllLeaves(100n), [0, 2]);
+    assert.deepEqual(tree.findAllLeaves(200n), [1]);
+    assert.deepEqual(tree.findAllLeaves(999n), []);
+
+    // findLeaf still returns the first, which is the correct index to prove against:
+    // every duplicate shares one nullifier, so only one is ever spendable.
+    assert.equal(tree.findLeaf(100n), 0);
+    assert.equal(tree.hasLeaf(100n), true);
+    assert.equal(tree.hasLeaf(999n), false);
+  });
+
   it("decodes next_index and current_root_index correctly", () => {
     const pool = makePoolData({
       nextIndex: 123_456,

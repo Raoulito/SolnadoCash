@@ -175,6 +175,31 @@ export class MerkleTree {
     return this.layers[0].indexOf(leaf);
   }
 
+  /**
+   * All indices at which a leaf value appears (L-3).
+   *
+   * The program accepts duplicate commitments — it cannot cheaply do otherwise, since
+   * detecting them would mean storing every leaf on-chain. But a commitment maps to
+   * exactly one nullifier, so only ONE of a set of duplicate leaves is ever
+   * withdrawable: the second deposit of the same commitment is permanently locked.
+   *
+   * Randomly generated notes never collide (2 x 254 bits), so in practice this only
+   * happens when a note is reused — depositing with the same note twice. Callers
+   * should check before depositing rather than discovering it at withdrawal time.
+   */
+  findAllLeaves(leaf: bigint): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < this.layers[0].length; i++) {
+      if (this.layers[0][i] === leaf) out.push(i);
+    }
+    return out;
+  }
+
+  /** True if this commitment is already in the tree (L-3). */
+  hasLeaf(leaf: bigint): boolean {
+    return this.findLeaf(leaf) !== -1;
+  }
+
   /** Get the node value at a given level and index (zeros for empty positions). */
   private nodeAt(level: number, index: number): bigint {
     if (index < this.layers[level].length) {
@@ -306,6 +331,20 @@ export async function generateWithdrawProof(
   const leafIndex = merkleTree.findLeaf(commitment);
   if (leafIndex === -1) {
     throw new Error("Commitment not found in Merkle tree — rebuild tree from all deposit events");
+  }
+
+  // L-3: duplicate commitments are accepted on-chain but share one nullifier, so
+  // only the first is spendable. Proving against the earliest index is the correct
+  // choice (any index yields the same nullifier), but the user should know that a
+  // second deposit of this note is unrecoverable.
+  const duplicates = merkleTree.findAllLeaves(commitment);
+  if (duplicates.length > 1) {
+    console.warn(
+      `[solnadocash] This commitment appears ${duplicates.length} times in the tree ` +
+        `(leaf indices ${duplicates.join(", ")}). A commitment has exactly one ` +
+        `nullifier, so only one of these deposits can ever be withdrawn — the others ` +
+        `are permanently locked. This means the note was reused across deposits.`
+    );
   }
 
   // Get Merkle proof

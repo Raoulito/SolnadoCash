@@ -150,6 +150,20 @@ class MerkleTree {
     findLeaf(leaf) {
         return this.layers[0].indexOf(leaf);
     }
+    /** All indices at which a leaf appears. Duplicates share one nullifier, so only
+     *  one of them is ever withdrawable (L-3). */
+    findAllLeaves(leaf) {
+        const out = [];
+        for (let i = 0; i < this.layers[0].length; i++) {
+            if (this.layers[0][i] === leaf)
+                out.push(i);
+        }
+        return out;
+    }
+    /** True if this commitment is already in the tree (L-3). */
+    hasLeaf(leaf) {
+        return this.findLeaf(leaf) !== -1;
+    }
     /** Get the node value at a given level and index (zeros for empty positions). */
     nodeAt(level, index) {
         if (index < this.layers[level].length) {
