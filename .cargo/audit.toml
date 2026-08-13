@@ -1,0 +1,37 @@
+# cargo-audit configuration
+#
+# Run: cargo audit
+#
+# Advisories ignored here are ACCEPTED RISKS with a written justification, not
+# silenced noise. Anything not listed must fail the build.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2024-0344 — timing variability in curve25519-dalek's Scalar29::sub /
+    # Scalar52::sub (fixed in 4.1.3).
+    #
+    # Reachable: yes, transitively. curve25519-dalek 3.2.1 <- solana-program 1.18.26,
+    # which this program depends on directly and through groth16-solana. It is used for
+    # ed25519 point decompression, notably in PDA derivation (checking a candidate
+    # address is NOT on the curve).
+    #
+    # Exploitable here: no. The advisory is a side channel on SECRET ed25519 scalars.
+    # This program performs no ed25519 scalar arithmetic on secrets: note secrets are
+    # BN254 field elements handled off-chain, proof verification uses the alt_bn128
+    # syscalls, and hashing uses the poseidon syscall. The only curve25519 use is PDA
+    # derivation over public inputs (seeds are the pool key and the nullifier hash,
+    # both public by the time they reach the chain). There is no secret scalar whose
+    # timing could leak.
+    #
+    # Cannot be fixed in isolation: 3.2.1 is pinned by solana-program 1.18.26, and
+    # 4.x is a breaking change. The real fix is upgrading the Solana crate stack, which
+    # belongs with the pre-mainnet dependency refresh (tracked alongside C-2/C-3) and
+    # must be re-tested end to end rather than slipped in.
+    "RUSTSEC-2024-0344",
+]
+
+# Unmaintained/unsound *warnings* (bincode, bitmaps, derivative, im, libsecp256k1,
+# memmap2, rand, sized-chunks, atty, borsh, curve25519-dalek unsound) are all
+# transitive dependencies of the Solana 1.18 toolchain and are reported as warnings
+# rather than vulnerabilities. They are not ignored here: they should stay visible so
+# the Solana stack upgrade is evaluated on its merits before mainnet.

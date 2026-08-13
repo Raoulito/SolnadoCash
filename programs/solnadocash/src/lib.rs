@@ -18,9 +18,18 @@ use crate::state::{Pool, VaultAccount, POOL_SIZE};
 use crate::withdraw::WithdrawArgs;
 pub use crate::events::*;
 
+/// Accounts for the CU benchmark instructions.
+///
+/// Carries `system_program` purely so the struct has an `'info` lifetime. Without it
+/// the crate fails to compile under `--features benchmark,cpi`: the `cpi` feature makes
+/// `#[program]` generate CPI wrappers that reference `Benchmark<'info>`, while an empty
+/// accounts struct has no lifetime parameter (found by `cargo clippy --all-features`).
+/// Anchor resolves system_program automatically, so callers pass nothing extra.
 #[cfg(feature = "benchmark")]
 #[derive(Accounts)]
-pub struct Benchmark {}
+pub struct Benchmark<'info> {
+    pub system_program: Program<'info, System>,
+}
 
 // Thin accounts shim for bare-metal withdraw — all validation done in withdraw::process_withdraw
 #[derive(Accounts)]

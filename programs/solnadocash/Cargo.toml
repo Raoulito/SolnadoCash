@@ -10,6 +10,9 @@ name = "solnadocash"
 
 [features]
 no-entrypoint = []
+# Declared because anchor's derive macros emit #[cfg(feature = "anchor-debug")];
+# without it `cargo clippy -- -D warnings` fails on unexpected_cfgs.
+anchor-debug = []
 no-idl = []
 no-log-ix-name = []
 cpi = ["no-entrypoint"]

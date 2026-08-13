@@ -76,11 +76,11 @@ pub fn run_poseidon_benchmark() -> Result<()> {
     let leaf: [u8; 32] = [1u8; 32];
     let mut current = leaf;
 
-    for level in 0..20usize {
+    for zero in ZEROS.iter() {
         let hash = hashv(
             Parameters::Bn254X5,
             Endianness::BigEndian,
-            &[&current, &ZEROS[level]],
+            &[&current, zero],
         )
         .map_err(|_| error!(ErrorCode::BenchmarkPoseidonHash))?;
         current = hash.0;

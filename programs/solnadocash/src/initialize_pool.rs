@@ -53,15 +53,12 @@ pub fn handler(ctx: Context<InitializePool>, denomination: u64, version: u8) -> 
     pool._pad0 = [0u8; 7];
     pool._pad1 = [0u8; 4];
 
-    // Initialize filled_subtrees with ZEROS
-    for i in 0..TREE_DEPTH {
-        pool.filled_subtrees[i] = ZEROS[i];
-    }
+    // Initialize filled_subtrees with ZEROS. Same type ([[u8; 32]; TREE_DEPTH]), so a
+    // whole-array assignment — clearer and cheaper than an indexed loop.
+    pool.filled_subtrees = ZEROS;
 
     // Zero out root_history
-    for i in 0..ROOT_HISTORY_SIZE {
-        pool.root_history[i] = [0u8; 32];
-    }
+    pool.root_history = [[0u8; 32]; ROOT_HISTORY_SIZE];
 
     // Compute initial root = hashv(ZEROS[TREE_DEPTH-1], ZEROS[TREE_DEPTH-1])
     let initial_root = hashv(

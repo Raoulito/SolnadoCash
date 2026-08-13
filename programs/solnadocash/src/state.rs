@@ -86,6 +86,11 @@ impl Pool {
         let mut current_index = self.next_index;
         let mut current_level_hash = leaf;
 
+        // clippy::needless_range_loop is allowed deliberately: the index addresses TWO
+        // arrays (filled_subtrees and ZEROS) and the loop also tracks tree position.
+        // Rewriting it as an iterator chain would obscure security-critical Merkle
+        // logic to satisfy a style lint.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..TREE_DEPTH {
             let (left, right) = if current_index % 2 == 0 {
                 // current is left child — store it, right is ZEROS[i]
