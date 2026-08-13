@@ -118,11 +118,7 @@ export async function submitWithdraw({
 
   // Derive PDAs
   const nullifierHash = bigIntToBytes32(BigInt(publicSignals[0]));
-  const [nullifierPda, nullifierBump] = findNullifierPda(
-    poolAddress,
-    nullifierHash,
-    programId
-  );
+  const [nullifierPda] = findNullifierPda(poolAddress, nullifierHash, programId);
   const [vaultPda] = findVaultPda(poolAddress, programId);
 
   // Convert proof
@@ -139,7 +135,6 @@ export async function submitWithdraw({
     ),
     relayerFeeMax: new BN(relayerFeeMax.toString()),
     relayerFeeTaken: new BN(relayerFeeTaken.toString()),
-    nullifierBump,
   };
 
   // Build the instruction

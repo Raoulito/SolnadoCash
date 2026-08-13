@@ -399,7 +399,6 @@ async function setupFixture(program, provider, recipientPredicate = null, commit
     withdrawalCommitment: Array.from(bigIntToBytes32(BigInt(publicSignals[2]))),
     relayerFeeMax: new anchor.BN(RELAYER_FEE_MAX.toString()),
     relayerFeeTaken: new anchor.BN(RELAYER_FEE_TAKEN.toString()),
-    nullifierBump: 0,
   };
 
   return {
@@ -416,13 +415,13 @@ async function setupFixture(program, provider, recipientPredicate = null, commit
 }
 
 function withdrawCall(program, fx, args, accounts = {}) {
-  const [nullifierPda, bump] = findNullifierPda(
+  const [nullifierPda] = findNullifierPda(
     fx.poolPda,
     Buffer.from(args.nullifierHash),
     program.programId
   );
   return program.methods
-    .withdraw({ ...args, nullifierBump: bump })
+    .withdraw(args)
     .accountsPartial({
       pool: fx.poolPda,
       vault: fx.vaultPda,

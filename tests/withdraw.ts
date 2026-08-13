@@ -216,7 +216,7 @@ function generateNote(denomination: bigint) {
 function buildWithdrawArgs(
   proof: any,
   publicSignals: string[], // [nullifierHash, root, withdrawalCommitment]
-  nullifierBump: number,
+  _unusedBump: number, // kept positional for call-site stability; bump is derived on-chain (L-4)
   relayerFeeMax: bigint,
   relayerFeeActual: bigint
 ): any {
@@ -230,7 +230,6 @@ function buildWithdrawArgs(
     withdrawalCommitment: Array.from(bigIntToBytes32(BigInt(publicSignals[2]))),
     relayerFeeMax: new BN(relayerFeeMax.toString()),
     relayerFeeTaken: new BN(relayerFeeActual.toString()),
-    nullifierBump,
   };
 }
 
@@ -588,7 +587,6 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
       const aliasedArgs = {
         ...withdrawArgs1,
         nullifierHash: Array.from(aliasedBytes),
-        nullifierBump: aliasedBump,
       };
 
       try {
@@ -631,7 +629,6 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         program.programId
       );
       args.nullifierHash = Array.from(bigIntToBytes32(freshHash));
-      args.nullifierBump = freshBump;
 
       try {
         await program.methods
@@ -668,7 +665,6 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         ...withdrawArgs1,
         withdrawalCommitment: Array.from(bigIntToBytes32(aliasedWc)),
         nullifierHash: Array.from(bigIntToBytes32(freshHash)),
-        nullifierBump: freshBump,
       };
 
       try {

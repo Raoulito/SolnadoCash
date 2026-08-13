@@ -36,7 +36,10 @@ pub struct WithdrawArgs {
     pub withdrawal_commitment: [u8; 32],
     pub relayer_fee_max: u64,
     pub relayer_fee_taken: u64,
-    pub nullifier_bump: u8,
+    // NOTE: nullifier_bump was removed (L-4). The canonical bump is derived on-chain
+    // with find_program_address; accepting a caller-supplied bump was dead weight at
+    // best and, before it was ignored, allowed a non-canonical PDA and thus a
+    // double-spend. Do not reintroduce it.
 }
 
 /// Scan root_history to check if root is known.

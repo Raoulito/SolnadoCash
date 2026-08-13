@@ -361,7 +361,7 @@ async function main() {
   console.log("\nStep 6 — Submitting withdrawal on-chain...");
 
   const nullifierHashBytes = bigIntToBytes32(nullifierHash);
-  const [nullifierPda, nullifierBump] = findNullifierPda(
+  const [nullifierPda] = findNullifierPda(
     poolPda,
     nullifierHashBytes,
     program.programId
@@ -378,7 +378,6 @@ async function main() {
     withdrawalCommitment: Array.from(bigIntToBytes32(BigInt(publicSignals[2]))),
     relayerFeeMax: new anchor.BN(RELAYER_FEE_MAX.toString()),
     relayerFeeTaken: new anchor.BN(RELAYER_FEE_TAKEN.toString()),
-    nullifierBump,
   };
 
   const recipientBefore = await connection.getBalance(recipient.publicKey);
