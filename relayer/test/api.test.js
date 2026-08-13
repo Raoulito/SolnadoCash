@@ -4,21 +4,29 @@
 import { strict as assert } from "node:assert";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { createApp } from "../src/api.js";
+import { POOL_DISCRIMINATOR } from "../src/pool.js";
 
 // Minimal mock connection
 function mockConnection(balance = 10_000_000_000) {
   return {
     getBalance: async () => balance,
     getRecentPrioritizationFees: async () => [],
+    getMinimumBalanceForRentExemption: async () => 1_447_680,
     getAccountInfo: async (pubkey) => {
-      // Return a mock pool account with denomination = 1 SOL at offset 72
+      // A genuine pool account: program-owned, correct length, correct discriminator.
+      // N-2 made the relayer validate all three, so a mock lacking them is now
+      // (correctly) rejected — which is exactly the attack being defended against.
       const data = Buffer.alloc(8976);
+      POOL_DISCRIMINATOR.copy(data, 0);
       // denomination at offset 8 + 64 = 72 (after discriminator)
       data.writeBigUInt64LE(1_000_000_000n, 72);
       // treasury at offset 8 + 88 = 96
       const treasury = Keypair.generate().publicKey;
       treasury.toBytes().forEach((b, i) => (data[96 + i] = b));
-      return { data, owner: new PublicKey("11111111111111111111111111111111") };
+      return {
+        data,
+        owner: new PublicKey("DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59"),
+      };
     },
   };
 }
