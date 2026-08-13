@@ -16,8 +16,13 @@ beyond a single deposit.
 > upgrade authority are deliberate while the protocol is pre-launch and under repair; both must be
 > resolved before mainnet. Remaining: the medium and low items.
 >
-> H-4/H-5/H-6 are client-side findings, so they carry unit tests and build verification rather
-> than on-chain proof — except H-5, whose verifier is exercised against live devnet pool data.
+> H-4/H-6 are client-side findings, so they carry unit tests and build verification rather than
+> on-chain proof; H-5's verifier is exercised against live devnet pool data.
+>
+> **All ten MEDIUM findings are also FIXED** (M-1 … M-10), verified by 32 local on-chain tests,
+> 21 Rust unit, 91 SDK and 31 relayer tests. Two of them corrected errors in this document: see the
+> retraction under M-6, and M-9 where a circuit comment documented a protection the program never
+> enforced. The M-2 program change awaits a devnet redeploy (blocked on devnet funding).
 
 | Severity | Count | IDs |
 |---|---|---|
@@ -367,7 +372,7 @@ policy.
 
 ## 4. Medium
 
-**M-1 — Anonymity sets are fragmented by design and currently tiny.** Pool PDA seeds include
+**M-1 — Anonymity sets are fragmented by design and currently tiny.** — FIXED (made visible) Pool PDA seeds include
 `admin` (`lib.rs:51-58`), so every deployer creates a disjoint pool per denomination; the app
 hard-codes three pools from one admin. Anonymity is bounded by *that* pool's deposit count, which
 the UI never surfaces (it shows `nextIndex / 950,000` as a capacity bar, not as a privacy
@@ -375,26 +380,26 @@ indicator). With single-digit deposits, timing analysis alone links deposits to 
 → Publish a canonical pool registry, display the effective anonymity set, and warn below a
 threshold.
 
-**M-2 — The advertised fee invariant is a tautology.** `withdraw.rs:228-231` asserts
+**M-2 — The advertised fee invariant is a tautology.** — FIXED `withdraw.rs:228-231` asserts
 `treasury_fee + relayer_fee_taken + user_amount == denomination` immediately after computing
 `user_amount` as that exact difference; it can never fire. The README presents it as a core
 protection. The checks that would actually matter — `user_amount > 0`, a cap on
 `relayer_fee_max`, vault-balance conservation — are absent.
 
 **M-3 — "Pause never blocks withdrawals" is untested, and dead error handling suggests
-confusion.** `withdraw` correctly ignores `is_paused`, but no test asserts it, while
+confusion.** — FIXED `withdraw` correctly ignores `is_paused`, but no test asserts it, while
 `relayer/src/api.js:245` and `Withdraw.tsx:190` both map a `PoolPaused` error that the withdraw
 path can never return.
 
 **M-4 — The relayer submits transactions it could have rejected, and its fee behaviour
-contradicts the README.** It never checks that `publicSignals[2]` equals
+contradicts the README.** — FIXED It never checks that `publicSignals[2]` equals
 `Poseidon(relayer, feeMax, recipient)`, nor that the root is in the pool's history — so any
 client can burn the relayer's SOL on doomed transactions within the rate limit. And the README's
 "relayers that always claim the maximum are ranked lower … the SDK publishes each relayer's
 historical `fee_taken / fee_max` ratio" describes code that does not exist anywhere in the repo,
 while the reference relayer always claims the maximum.
 
-**M-5 — Rate limiting is IP-based with no proxy configuration.** `express-rate-limit` with
+**M-5 — Rate limiting is IP-based with no proxy configuration.** — FIXED `express-rate-limit` with
 default `req.ip` and no `app.set('trust proxy', …)`: behind any reverse proxy or CDN every user
 shares one bucket, making the 5 submissions/minute limit a trivial global DoS; deployed directly,
 IP rotation defeats it. → Configure `trust proxy` explicitly and key the submit limiter on the
@@ -417,7 +422,7 @@ constant as a fallback.
 > set. The only correct optimisation is to make the account as small as possible, which at 80 bytes
 > it already is.
 
-**M-7 — `circuits/build/` is gitignored while the setup script instructs you to commit it.**
+**M-7 — `circuits/build/` is gitignored while the setup script instructs you to commit it.** — FIXED
 `.gitignore:15` excludes the directory that `trusted_setup.sh:186-193` says to `git add`. Net
 effect on a fresh clone: `relayer/src/verify.js:12` cannot find `withdraw_vk.json` and the relayer
 crashes on first use; no ceremony transcript exists to audit. The proving key survives only by
@@ -425,12 +430,12 @@ accident, because `app/public/circuits/withdraw_final.zkey` happens to be tracke
 `withdraw_vk.json`, `withdraw.r1cs` and the ceremony transcript (with LFS if needed); have the
 relayer resolve the VK via an env var with a pinned SHA-256 checked against `vk.rs`.
 
-**M-8 — Devnet configuration is hardcoded into the shipped app.** `app/src/config.ts` pins
+**M-8 — Devnet configuration is hardcoded into the shipped app.** — FIXED `app/src/config.ts` pins
 devnet, `http://localhost:3000`, three pool addresses; explorer links hardcode
 `?cluster=devnet`. Mixed-content policy will block the HTTP relayer from any HTTPS deployment.
 → Move to `import.meta.env` with per-network config and fail closed on mismatch.
 
-**M-9 — The deposit circuit is decorative and its stated protection does not exist.**
+**M-9 — The deposit circuit is decorative and its stated protection does not exist.** — FIXED
 `deposit.circom:14-17` claims *"The Anchor program verifies denomination == pool.denomination
 before inserting"*. The on-chain `deposit` handler (`deposit.rs:10-56`) verifies no proof at all
 and accepts any 32-byte commitment. The `denomination` field inside the commitment is therefore
@@ -439,7 +444,7 @@ requires a Merkle-included leaf you created), but it is a false security claim, 
 second trusted setup (`deposit_final.zkey`) exists for nothing. → Delete the deposit circuit and
 its ceremony, or actually verify it on-chain.
 
-**M-10 — Stealth addresses are advertised but unusable.** `sdk/src/stealth.ts` is correct in
+**M-10 — Stealth addresses are advertised but unusable.** — FIXED (documented, not implemented) `sdk/src/stealth.ts` is correct in
 isolation (the clamped ed25519 scalar even neutralises small-subgroup ephemeral keys), but there
 is no announcement channel: the ephemeral pubkey is never written on-chain, never included in the
 note format, and the module is not imported anywhere in `app/`. The README describes it as a
