@@ -1,4 +1,7 @@
 "use strict";
+// ⚠ EXPERIMENTAL — NOT WIRED INTO THE PROTOCOL (M-10). No announcement channel
+// exists for the ephemeral public key, so a stealth address generated here is
+// unspendable unless the sender transmits that key out of band. See stealth.ts.
 // sdk/src/stealth.ts
 // T33 — Stealth address generation and recovery for unlinkable withdrawals
 //

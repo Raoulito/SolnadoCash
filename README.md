@@ -190,15 +190,19 @@ const res = await fetch(relayerUrl + "/submit_proof", {
 });
 ```
 
-## Stealth Addresses
+## Stealth Addresses (experimental — not wired in)
 
-For unlinkable withdrawals, SolnadoCash uses ECDH on Ed25519:
+The SDK ships an ECDH-on-Ed25519 stealth address implementation:
 
 1. Sender generates an ephemeral keypair and computes a shared secret with the recipient's scan key
 2. A stealth address is derived from `SHA-256(shared_secret || spend_pubkey)`
-3. The recipient recovers the stealth keypair using their scan private key + the published ephemeral public key
+3. The recipient recovers the stealth keypair using their scan private key + the ephemeral public key
 
-This means each withdrawal can go to a fresh, never-before-seen address that only the intended recipient can control.
+> **Not usable end to end yet.** There is no announcement channel for the ephemeral public key: it is not written on-chain, not carried in the note format, and `sdk/src/stealth.ts` is not imported anywhere in the app. A recipient therefore cannot discover the ephemeral key, so a stealth address generated today is unspendable unless the sender hands that key over out of band. Making it usable requires an `announce` instruction (emitting the ephemeral pubkey plus a view tag for cheap scanning) or embedding the key in the note.
+>
+> Note also that the module documents a deliberate limitation: there is no true scan/spend separation, because Ed25519's seed-based signing does not allow deriving a spendable Solana `Keypair` by scalar addition. The scan key alone can derive the stealth private key, so users are expected to set `scanKey = spendKey`. The unlinkability comes from the ephemeral key, not from key separation.
+>
+> Withdrawals do not need this: you can already withdraw to any fresh address you control.
 
 ## Development
 

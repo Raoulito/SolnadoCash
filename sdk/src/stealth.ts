@@ -1,6 +1,22 @@
 // sdk/src/stealth.ts
 // T33 — Stealth address generation and recovery for unlinkable withdrawals
 //
+// ⚠ EXPERIMENTAL — NOT WIRED INTO THE PROTOCOL (M-10).
+//
+// The cryptography below works and is tested, but there is no way to USE it end to
+// end yet, because the ephemeral public key has nowhere to live:
+//   * it is not written on-chain (no announcement account or event carries it),
+//   * it is not part of the note format (sdk/src/note.ts),
+//   * nothing in app/ imports this module.
+// A recipient therefore has no way to discover the ephemeral key needed to recover
+// the stealth keypair, so a stealth address generated here is unspendable unless the
+// sender transmits that key out of band by hand.
+//
+// Making this usable needs an announcement channel — e.g. an `announce` instruction
+// emitting (ephemeral_pubkey, view_tag) that recipients scan, or embedding the
+// ephemeral key in the note. Until then, treat this module as a building block and
+// do not present it to users as a feature.
+//
 // Protocol: ECDH on Ed25519 + hash-to-seed
 //
 //   Sender (has scan_pub, spend_pub):
