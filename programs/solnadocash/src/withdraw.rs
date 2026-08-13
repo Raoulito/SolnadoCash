@@ -210,6 +210,21 @@ pub fn process_withdraw(
     // 2. Verify relayer is signer
     require!(relayer_info.is_signer, ErrorCode::RelayerNotSigner);
 
+    // 2b. Fee sanity checks (H-3). Cheap arithmetic, so run them before the root
+    // scan and Groth16 verification: an invalid fee request is rejected for a few
+    // hundred CU instead of ~100k.
+    require!(args.relayer_fee_taken <= args.relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
+
+    // Nothing previously bounded relayer_fee_max: a relayer could quote a ceiling
+    // approaching the whole denomination and claim it, and a unit bug in the
+    // reference relayer did exactly that. The protocol cannot read a gas oracle,
+    // but it can refuse fees that are absurd relative to the denomination. 2% is
+    // ~6.5x the real cost of a withdrawal on a 1 SOL pool at rest.
+    require!(
+        args.relayer_fee_max <= pool_denomination / MAX_RELAYER_FEE_DIVISOR,
+        ErrorCode::RelayerFeeMaxTooHigh
+    );
+
     // 3. Verify vault PDA
     let expected_vault = Pubkey::create_program_address(
         &[b"vault", pool_info.key.as_ref(), &[vault_bump]],
@@ -260,25 +275,6 @@ pub fn process_withdraw(
         &[&relayer_field, &fee_max_bytes, &recipient_field],
     ).map_err(|_| error!(ErrorCode::PoseidonFailed))?.0;
     require!(computed_commitment == args.withdrawal_commitment, ErrorCode::InvalidWithdrawalCommitment);
-
-    // 10. Verify relayer_fee_taken <= relayer_fee_max
-    require!(args.relayer_fee_taken <= args.relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
-
-    // 10b. Cap the relayer fee (H-3).
-    //
-    // Nothing previously bounded relayer_fee_max: a relayer could quote a ceiling
-    // approaching the whole denomination and claim it, and a unit bug in the
-    // reference relayer did exactly that. The protocol cannot read a gas oracle,
-    // but it can refuse fees that are absurd relative to the denomination.
-    //
-    // 2% of the denomination is ~6.5x the real cost of a withdrawal on a 1 SOL
-    // pool at rest, so it leaves ample room for congestion while making
-    // confiscatory fees unrepresentable.
-    let max_relayer_fee = pool_denomination / MAX_RELAYER_FEE_DIVISOR;
-    require!(
-        args.relayer_fee_max <= max_relayer_fee,
-        ErrorCode::RelayerFeeMaxTooHigh
-    );
 
     // 11. Compute fees (treasury_fee = denomination / 500)
     let treasury_fee = pool_denomination / 500;

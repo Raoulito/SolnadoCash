@@ -686,6 +686,49 @@ async function verifyH2(program, provider, fx) {
   }
 }
 
+// ── H-3: on-chain relayer fee cap ────────────────────────────────────────────
+async function verifyH3(program, provider, fx) {
+  console.log("\n── H-3: relayer fee cap ──");
+
+  const cap = DENOMINATION_BI / 50n;
+  record(
+    "H-3",
+    "cap is 2% of denomination",
+    cap === 400_000n,
+    `${cap} lamports on a ${Number(DENOMINATION_BI) / LAMPORTS_PER_SOL} SOL pool`
+  );
+
+  // Reuse the fixture note but claim a fee above the cap. The commitment binds
+  // fee_max, so this needs its own proof — built by the caller via feeMax.
+  await expectReject(
+    "H-3",
+    "relayer_fee_max above the cap is rejected",
+    "RelayerFeeMaxTooHigh",
+    () =>
+      withdrawCall(program, fx, {
+        ...fx.baseArgs,
+        relayerFeeMax: new anchor.BN((cap + 1n).toString()),
+        relayerFeeTaken: new anchor.BN("0"),
+      }).rpc()
+  );
+
+  // And the honest at-quote fee still works.
+  const before = await provider.connection.getBalance(fx.recipient.publicKey);
+  try {
+    const sig = await withdrawCall(program, fx, fx.baseArgs).rpc();
+    const after = await provider.connection.getBalance(fx.recipient.publicKey);
+    const expectedUser = DENOMINATION_BI - TREASURY_FEE - RELAYER_FEE_TAKEN;
+    record(
+      "H-3",
+      "in-cap fee still succeeds",
+      BigInt(after - before) === expectedUser,
+      `+${after - before} (expected ${expectedUser}), tx ${sig.slice(0, 12)}…`
+    );
+  } catch (err) {
+    record("H-3", "in-cap fee still succeeds", false, err.message);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -733,6 +776,11 @@ async function main() {
       provider,
       await setupFixture(program, provider, (pk) => pubkeyToBigInt(pk) + BN254_FIELD_ORDER < 1n << 256n)
     );
+  }
+
+  if (wanted("H-3")) {
+    console.log("\nPreparing fixture for H-3...");
+    await verifyH3(program, provider, await setupFixture(program, provider));
   }
 
   console.log("\n═══════════════════════════════════════════════════════════");
