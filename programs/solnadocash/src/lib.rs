@@ -7,6 +7,7 @@ pub mod events;
 pub mod state;
 pub mod zeros;
 pub mod vk;
+#[cfg(feature = "benchmark")]
 pub mod benchmark;
 pub mod initialize_pool;
 pub mod deposit;
@@ -17,6 +18,7 @@ use crate::state::{Pool, VaultAccount, POOL_SIZE};
 use crate::withdraw::WithdrawArgs;
 pub use crate::events::*;
 
+#[cfg(feature = "benchmark")]
 #[derive(Accounts)]
 pub struct Benchmark {}
 
@@ -144,12 +146,17 @@ pub mod solnadocash {
         admin::unpause_pool_handler(ctx)
     }
 
-    // ── T11: groth16_verify CU benchmark ──────────────────────────────────────
+    // ── T11/T12: CU benchmarks (L-7) ──────────────────────────────────────────
+    // Gated behind the `benchmark` feature. These were reachable in every build,
+    // so a production deployment carried two instructions that exist only to
+    // measure compute units — dead entrypoints and needless attack surface.
+    // Build with: anchor build -- --features benchmark
+    #[cfg(feature = "benchmark")]
     pub fn benchmark_groth16(_ctx: Context<Benchmark>) -> Result<()> {
         benchmark::run_groth16_benchmark()
     }
 
-    // ── T12: 20-level Poseidon CU benchmark ───────────────────────────────────
+    #[cfg(feature = "benchmark")]
     pub fn benchmark_poseidon(_ctx: Context<Benchmark>) -> Result<()> {
         benchmark::run_poseidon_benchmark()
     }

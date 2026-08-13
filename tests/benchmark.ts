@@ -16,10 +16,27 @@ import type { Solnadocash } from "../target/types/solnadocash";
 
 const MAX_CU = 1_400_000;
 
-describe("CU Benchmarks (T11 + T12)", () => {
+describe("CU Benchmarks (T11 + T12)", function () {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Solnadocash as Program<Solnadocash>;
+
+  // L-7: the benchmark instructions are gated behind the `benchmark` cargo feature
+  // so they are absent from production builds. Skip rather than fail when the
+  // program was built without them.
+  //   anchor build -- --features benchmark && anchor test --skip-build
+  before(function () {
+    const names = (program.idl.instructions ?? []).map((i: { name: string }) => i.name);
+    const present =
+      names.includes("benchmark_groth16") || names.includes("benchmarkGroth16");
+    if (!present) {
+      console.log(
+        "\n  [benchmark] skipped — program built without the `benchmark` feature (L-7).\n" +
+          "  Enable with: anchor build -- --features benchmark"
+      );
+      this.skip();
+    }
+  });
 
   // Returns unitsConsumed even if the simulation fails (e.g. invalid proof).
   async function measureCU(
