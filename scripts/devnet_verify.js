@@ -226,7 +226,7 @@ async function fetchTxFee(connection, sig, tries = 10) {
 }
 
 // ── Shared fixture ───────────────────────────────────────────────────────────
-async function setupFixture(program, provider, recipientPredicate = null) {
+async function setupFixture(program, provider, recipientPredicate = null, commitToAddress = null) {
   const connection = provider.connection;
   const funder = provider.wallet;
 
@@ -359,7 +359,11 @@ async function setupFixture(program, provider, recipientPredicate = null) {
   const { pathElements, pathIndices, root } = tree.proof(leafIndex);
 
   const relayerField = pubkeyToField(relayer.publicKey);
-  const recipientField = pubkeyToField(recipient.publicKey);
+  // Normally the generated recipient. commitToAddress lets a check bind the proof
+  // to an arbitrary address (e.g. the vault) so guards behind the commitment check
+  // become reachable.
+  const committedRecipient = commitToAddress ?? recipient.publicKey;
+  const recipientField = pubkeyToField(committedRecipient);
   const withdrawalCommitment = poseidonHash(
     relayerField,
     RELAYER_FEE_MAX,
@@ -806,6 +810,111 @@ async function verifyH5(program, provider, fx) {
   }
 }
 
+// ── M-2: lamport conservation and account distinctness ───────────────────────
+async function verifyM2(program, provider, fxVault, fx) {
+  console.log("\n── M-2: lamport conservation / account distinctness ──");
+
+  // fxVault's proof commits to the VAULT as recipient, so the commitment check
+  // passes and the distinctness guard is what must reject it.
+  await expectReject(
+    "M-2",
+    "vault as recipient is rejected by the distinctness guard",
+    "DuplicateAccount",
+    () => withdrawCall(program, fxVault, fxVault.baseArgs, { recipient: fxVault.vaultPda }).rpc()
+  );
+
+  // The treasury slot cannot be the vault at all: treasury must equal
+  // pool.treasury, which is fixed at pool creation and must be system-owned. So the
+  // earlier check fires first and the distinctness guard is belt-and-braces here.
+  await expectReject(
+    "M-2",
+    "vault as treasury is rejected (by the treasury binding, before distinctness)",
+    "InvalidTreasury",
+    () => withdrawCall(program, fx, fx.baseArgs, { treasury: fx.vaultPda }).rpc()
+  );
+
+  // Honest withdrawal: verify the ledger balances exactly.
+  const bal = (k) => provider.connection.getBalance(k);
+  const [v0, t0, r0] = await Promise.all([
+    bal(fx.vaultPda),
+    bal(fx.treasury),
+    bal(fx.recipient.publicKey),
+  ]);
+  try {
+    const sig = await withdrawCall(program, fx, fx.baseArgs).rpc();
+    const [v1, t1, r1] = await Promise.all([
+      bal(fx.vaultPda),
+      bal(fx.treasury),
+      bal(fx.recipient.publicKey),
+    ]);
+    const paidFee = fx.treasury.equals(provider.wallet.publicKey)
+      ? await fetchTxFee(provider.connection, sig)
+      : 0n;
+
+    record(
+      "M-2",
+      "vault debited exactly one denomination",
+      BigInt(v0 - v1) === DENOMINATION_BI,
+      `-${v0 - v1}`
+    );
+    record(
+      "M-2",
+      "credits sum to the vault debit (no lamports created or destroyed)",
+      BigInt(v0 - v1) ===
+        BigInt(t1 - t0) + paidFee + BigInt(r1 - r0) + RELAYER_FEE_TAKEN,
+      `treasury ${t1 - t0} (+tx fee ${paidFee}) + recipient ${r1 - r0} + relayer ${RELAYER_FEE_TAKEN}`
+    );
+  } catch (err) {
+    record("M-2", "honest withdrawal conserves lamports", false, err.message);
+  }
+}
+
+// ── M-3: pausing must not block withdrawals ──────────────────────────────────
+async function verifyM3(program, provider, fx) {
+  console.log("\n── M-3: paused pool still allows withdrawals ──");
+
+  await program.methods
+    .pausePool()
+    .accountsPartial({ admin: provider.wallet.publicKey, pool: fx.poolPda })
+    .rpc();
+
+  const paused = await provider.connection.getAccountInfo(fx.poolPda);
+  record("M-3", "pool is paused", paused.data[8 + 123] === 1, "is_paused = 1");
+
+  await expectReject("M-3", "deposits are blocked while paused", "PoolPaused", () =>
+    program.methods
+      .deposit(Array.from(bigIntToBytes32(randomFieldElem())))
+      .accountsPartial({
+        pool: fx.poolPda,
+        vault: fx.vaultPda,
+        depositor: provider.wallet.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc()
+  );
+
+  const before = await provider.connection.getBalance(fx.recipient.publicKey);
+  try {
+    const sig = await withdrawCall(program, fx, fx.baseArgs).rpc();
+    const after = await provider.connection.getBalance(fx.recipient.publicKey);
+    record(
+      "M-3",
+      "withdrawal succeeds while paused (users can always exit)",
+      BigInt(after - before) === DENOMINATION_BI - TREASURY_FEE - RELAYER_FEE_TAKEN,
+      `+${after - before}, tx ${sig.slice(0, 12)}…`
+    );
+  } catch (err) {
+    record("M-3", "withdrawal succeeds while paused", false, err.message);
+  }
+
+  await program.methods
+    .unpausePool()
+    .accountsPartial({ admin: provider.wallet.publicKey, pool: fx.poolPda })
+    .rpc();
+  const after = await provider.connection.getAccountInfo(fx.poolPda);
+  record("M-3", "pool unpaused again", after.data[8 + 123] === 0, "is_paused = 0");
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -855,6 +964,23 @@ async function main() {
     );
   }
 
+  if (wanted("M-2")) {
+    console.log("\nPreparing fixtures for M-2 (one committed to the vault)...");
+    const [poolPda] = findPoolPda(
+      provider.wallet.publicKey,
+      DENOMINATION,
+      VERSION,
+      program.programId
+    );
+    const [vaultPda] = findVaultPda(poolPda, program.programId);
+    const fxVault = await setupFixture(program, provider, null, vaultPda);
+    const fxNormal = await setupFixture(program, provider);
+    await verifyM2(program, provider, fxVault, fxNormal);
+  }
+  if (wanted("M-3")) {
+    console.log("\nPreparing fixture for M-3...");
+    await verifyM3(program, provider, await setupFixture(program, provider));
+  }
   if (wanted("H-5")) {
     console.log("\nPreparing fixture for H-5...");
     await verifyH5(program, provider, await setupFixture(program, provider));
