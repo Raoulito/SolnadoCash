@@ -172,6 +172,176 @@ to a `u64` by the on-chain commitment recomputation.
 
 ---
 
-*Second pass performed 2026-08-13 against commit `d5bf8e8`. Every finding here was
-reproduced — by direct execution of the affected code, by dependency-source inspection,
-or by probing the runtime on a local validator.*
+## Structured audit pass (Phases 1–4)
+
+Executed against commit `70938d3`.
+
+### Phase 1 — Automated static analysis
+
+| Tool | Result |
+|---|---|
+| `cargo clippy --all-targets --all-features -- -D warnings` | **clean** (was 2 compile errors + 3 lints) |
+| `cargo audit` | **clean** (was 2 vulnerabilities) |
+| `cargo machete` | **clean** (was 1 unused dependency) |
+| Sec3 / Soteria | not run — see below |
+
+**Real defect found: the crate did not compile under `--features benchmark,cpi`.** The
+`cpi` feature makes `#[program]` generate CPI wrappers referencing `Benchmark<'info>`,
+but an empty accounts struct has no lifetime parameter. Anyone integrating this program
+via CPI with benchmarks enabled hit a compile error, and `--all-features` — what
+auditors and CI run — failed outright. Fixed by giving `Benchmark` a `system_program`
+field, which Anchor resolves automatically. All six feature combinations now compile.
+
+Three `needless_range_loop` lints: two were plain array fills in `initialize_pool`,
+replaced with whole-array assignment. The third, in `Pool::insert`, is deliberately
+`#[allow]`ed with a written reason — that index addresses two arrays and tracks tree
+position, and contorting security-critical Merkle code into an iterator chain to satisfy
+a style lint is the wrong trade.
+
+`cargo audit` found two advisories:
+- RUSTSEC-2026-0204 (crossbeam-epoch, invalid pointer deref) — fixed by `cargo update`
+  to 0.9.20. Build-time only, reached via `solana-frozen-abi`.
+- RUSTSEC-2024-0344 (curve25519-dalek 3.2.1, timing variability in `Scalar::sub`) —
+  **accepted** in `.cargo/audit.toml` with justification. It is reachable transitively
+  via `solana-program` 1.18.26 and used for PDA derivation, but the advisory concerns a
+  side channel on *secret* ed25519 scalars and this program has none: note secrets are
+  BN254 elements handled off-chain, proof verification uses the `alt_bn128` syscalls, and
+  PDA seeds are public by the time they reach the chain. 3.2.1 is pinned by
+  `solana-program`, so the real fix is the Solana stack upgrade before mainnet.
+
+Unmaintained/unsound *warnings* (bincode, im, rand, memmap2, sized-chunks, …) are all
+transitive Solana 1.18 dependencies and are deliberately **not** ignored, so the stack
+upgrade stays visible.
+
+`cargo machete` flagged `bytemuck`. It was genuinely unused — Anchor's `zero_copy` macro
+uses its own re-export — verified by building and testing without it. Removed.
+
+**Sec3 / Soteria was not run.** The open-source `soteria` CLI is effectively
+unmaintained and pinned to old Solana versions; the successor is a hosted commercial
+product. Its published rule set — missing signer checks, incorrect owner validation,
+integer overflow, PDA misuse — is covered explicitly by Phase 4 below and by the
+`overflow-checks = true` profile. This is a gap in tooling coverage, not in reasoning,
+and running the hosted product before mainnet is worth doing.
+
+### Phase 2 — Fuzzing and property-based testing
+
+`proptest` added with **11 properties over the real on-chain functions**. The refactor
+that made this possible matters more than the tests: the fee arithmetic and denomination
+floor were inline in the instruction handlers, so properties could only test a *mirrored
+copy* — which drifts and then constrains nothing. Extracted `compute_fee_split()` and
+`worst_case_user_amount()` as pure functions called by both.
+
+Properties: conservation, user keeps ≥97.8%, user amount never zero, relayer fee doubly
+bounded, no panic on any `u64` triple, accepted denominations always withdrawable (N-3),
+treasury fee bounded, canonical-field check matches numeric comparison, values ≥ Fr
+always rejected, pubkey encoding always in-field, distinct pubkeys never collide (H-2
+regression guard).
+
+**The suite was validated by mutation testing rather than assumed to work**, which
+exposed two generator defects that made it far weaker than it looked:
+
+| Mutation | Before | After |
+|---|---|---|
+| 2% fee cap removed | 1 property failed | 2 properties fail |
+| conservation broken | caught | caught |
+| `is_canonical_fr` accepts exactly Fr | **missed** | caught |
+| `user_amount > 0` removed | not caught | not caught — *unreachable, see below* |
+
+- Fees drawn uniformly from `0..u64::MAX/4` almost always overflowed into the rejected
+  branch, so the region around the 2% cap — where bugs live — was never explored. Fees
+  are now generated *relative to the denomination*, spanning the cap.
+- Uniform 32-byte draws never hit `x == Fr` (probability 2⁻²⁵⁶), so an off-by-one
+  accepting exactly Fr passed every property while the hand-written boundary unit test
+  caught it immediately. The generator now mixes uniform draws with Fr, Fr±1, zero and
+  all-ones. This is a good illustration of why fuzzing and boundary unit tests are
+  complements, not substitutes.
+- Removing `user_amount > 0` is provably undetectable: with the 2% cap the user always
+  keeps ≥97.8%, so a zero payout is unreachable. That check is defence-in-depth against
+  a future cap change, exactly as its comment claims.
+
+**Trident and `cargo fuzz` were not run.** Both need a dedicated harness (honggfuzz /
+libFuzzer plus a Solana-aware corpus) that is a project in itself. Partial equivalent
+coverage exists: malformed instruction data is rejected by Borsh deserialisation before
+reaching any logic; every account-substitution vector Trident would explore is covered
+by explicit on-chain negative tests (wrong pool, wrong vault, wrong treasury, vault as
+recipient, pre-funded nullifier, aliased public inputs); and the pure arithmetic that
+`cargo fuzz` would target is now covered by proptest with mutation-validated
+generators. A real Trident harness remains worthwhile before mainnet.
+
+### Phase 3 — ZK circuit analysis
+
+`circomspect` (Trail of Bits) on every circuit:
+
+```
+withdraw.circom      2 issues (both INFO, benign — see below)
+merkle_proof.circom  No issues found
+deposit.circom       No issues found
+poseidon.circom      No issues found
+```
+
+The two notes on `withdraw.circom` are field-arithmetic and field-comparison warnings on
+the loop counter `i < levels`, where `levels` is the compile-time constant 20 — standard
+false positives for bounded `for` loops.
+
+**No under-constrained signals reported**, which corroborates the manual finding that
+all three public inputs are constrained (`nullifierHash` by C1, `root` by `MerkleProof`'s
+final equality, `withdrawalCommitment` by C4).
+
+Stated precisely: circomspect is a static analyser and does not *prove* the absence of
+under-constraints. **Ecne was not run** — it is a Julia R1CS solver whose setup is
+substantial. Given that a single-party trusted setup (C-2) already lets the operator
+forge proofs, circuit soundness is not currently the binding constraint on trust; it
+becomes the binding constraint the moment the ceremony is redone, and Ecne or an
+equivalent R1CS analysis should run before that.
+
+### Phase 4 — Manual logic review
+
+Each item verified against the code, with the evidence rather than an assurance.
+
+**Missing signer checks** — every state-changing instruction requires a signature:
+`withdraw` takes `relayer: Signer<'info>` *and* re-checks `relayer_info.is_signer`
+in the bare-metal path (belt and braces, since the shim's guarantee is easy to lose in a
+refactor); `initialize_pool` and `pause`/`unpause` take `admin: Signer`, with the
+handlers additionally asserting `pool.admin == admin.key()`; `deposit` takes
+`depositor: Signer`. No instruction mutates state or moves lamports without one.
+
+**Incorrect owner checks** — `withdraw` uses `UncheckedAccount` throughout, so every
+check is manual and explicit: pool is `owner == program_id` **plus** an 8-byte
+discriminator match (ownership alone is insufficient — vaults and nullifier accounts are
+program-owned too); vault is re-derived and `owner == program_id`; nullifier is
+`data_is_empty()` and, on the top-up path, asserted system-owned; treasury is checked by
+*identity* against `pool.treasury`, which is stronger than an owner check; system program
+is checked by ID. `recipient` deliberately has no owner check — it is credit-only, and
+crediting any account is permitted by the runtime.
+
+**PDA derivation** — the nullifier PDA uses `find_program_address`, so only the canonical
+bump is ever accepted; the caller-supplied bump was removed entirely (L-4) because
+accepting one is precisely the shape of the original double-spend. Vault and pool use
+`create_program_address` with bumps *stored in the authenticated pool account* and then
+compare against the passed key. Seeds are collision-resistant by construction: every
+component is fixed-length (`"pool"` + admin32 + mint32 + denom8 + version1), so no
+concatenation ambiguity exists.
+
+**CPI spoofing** — the only CPI target anywhere is the System Program. In `withdraw` its
+address is asserted equal to `system_program::ID` before use; in `deposit` it is typed
+`Program<'info, System>`, which Anchor validates. There is no call into a user-supplied
+program, so there is no CPI to spoof.
+
+**Re-entrancy / state staleness** — Solana forbids re-entrancy, and the ordering is
+correct regardless. In `deposit` the Merkle insert completes and the pool borrow is
+released before the transfer CPI, so no borrow is held across a CPI boundary and a failed
+transfer reverts the insert atomically.
+
+**ZK-specific: nullifier re-use** — traced line by line. The nullifier PDA is checked
+empty (`withdraw.rs:289`), the account is created (`:360`), its data is written
+(`:426`), and only then do lamports move (`:441`–`:444`). **The nullifier is committed to
+state before any funds leave the vault**, so a duplicate is impossible even under
+partial failure: a second withdrawal finds a non-empty account and reverts. This is
+reinforced by the canonical-input guard from C-1, without which the *same* note produced
+5–6 distinct nullifier PDAs.
+
+---
+
+*Structured audit executed 2026-08-13. Tooling actually run: cargo clippy, cargo audit,
+cargo machete, proptest (with mutation validation), circomspect. Not run, with reasons
+given: Sec3/Soteria, Trident, cargo fuzz, Ecne.*
