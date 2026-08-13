@@ -11,6 +11,12 @@ use crate::error::ErrorCode;
 use crate::vk::WITHDRAW_VK;
 use crate::events::WithdrawalEvent;
 
+/// Relayer fees are capped at denomination / MAX_RELAYER_FEE_DIVISOR (= 2%).
+/// A withdrawal costs the relayer ~0.0031 SOL at rest, so on a 1 SOL pool this
+/// leaves ~6.5x headroom for congestion while making a confiscatory fee
+/// unrepresentable on-chain (H-3).
+pub const MAX_RELAYER_FEE_DIVISOR: u64 = 50;
+
 // Account indices (MUST match lib.rs WithdrawShim order)
 const IDX_POOL: usize = 0;
 const IDX_VAULT: usize = 1;
@@ -258,12 +264,31 @@ pub fn process_withdraw(
     // 10. Verify relayer_fee_taken <= relayer_fee_max
     require!(args.relayer_fee_taken <= args.relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
 
+    // 10b. Cap the relayer fee (H-3).
+    //
+    // Nothing previously bounded relayer_fee_max: a relayer could quote a ceiling
+    // approaching the whole denomination and claim it, and a unit bug in the
+    // reference relayer did exactly that. The protocol cannot read a gas oracle,
+    // but it can refuse fees that are absurd relative to the denomination.
+    //
+    // 2% of the denomination is ~6.5x the real cost of a withdrawal on a 1 SOL
+    // pool at rest, so it leaves ample room for congestion while making
+    // confiscatory fees unrepresentable.
+    let max_relayer_fee = pool_denomination / MAX_RELAYER_FEE_DIVISOR;
+    require!(
+        args.relayer_fee_max <= max_relayer_fee,
+        ErrorCode::RelayerFeeMaxTooHigh
+    );
+
     // 11. Compute fees (treasury_fee = denomination / 500)
     let treasury_fee = pool_denomination / 500;
     let user_amount = pool_denomination
         .checked_sub(treasury_fee)
         .and_then(|x| x.checked_sub(args.relayer_fee_taken))
         .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
+
+    // 11b. The user must actually receive something (H-3).
+    require!(user_amount > 0, ErrorCode::UserAmountZero);
 
     // 12. Fee invariant check
     require!(

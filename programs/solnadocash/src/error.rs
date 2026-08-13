@@ -50,4 +50,8 @@ pub enum ErrorCode {
     InsufficientVaultBalance,
     #[msg("public input is not a canonical BN254 field element")]
     NonCanonicalPublicInput,
+    #[msg("relayer fee max exceeds 2% of denomination")]
+    RelayerFeeMaxTooHigh,
+    #[msg("fees would leave the user with nothing")]
+    UserAmountZero,
 }

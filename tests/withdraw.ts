@@ -345,11 +345,16 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     relayer = Keypair.generate();
       relayerBigInt = pubkeyToField(relayer.publicKey);
 
-    // Airdrop SOL
-    for (const kp of [admin, relayer]) {
+    // Airdrop SOL. The admin funds every deposit in this file (one per test that
+    // needs a fresh note), so give it plenty of headroom. Amounts must differ per
+    // request, otherwise identical airdrop transactions dedupe to one signature.
+    for (const [kp, sol] of [
+      [admin, 60],
+      [relayer, 10],
+    ] as [Keypair, number][]) {
       const sig = await provider.connection.requestAirdrop(
         kp.publicKey,
-        10 * LAMPORTS_PER_SOL
+        sol * LAMPORTS_PER_SOL
       );
       await provider.connection.confirmTransaction(sig);
     }
@@ -1124,6 +1129,128 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         "a recipient with pubkey >= Fr must still be paid"
       );
       console.log("  [H-2] non-canonical recipient (pubkey >= Fr) paid in full");
+    });
+  });
+
+  // ── H-3: on-chain relayer fee cap ────────────────────────────────────────────
+  //
+  // Nothing bounded relayer_fee_max, so a relayer could quote a ceiling
+  // approaching the whole denomination and claim it. Cap is denomination / 50.
+  describe("withdraw — relayer fee cap (H-3)", () => {
+    const CAP = DENOMINATION / 50n; // 20_000_000 lamports on a 1 SOL pool
+
+    // Build a fresh note + proof committed to an arbitrary relayerFeeMax.
+    async function proveWithFeeMax(feeMax: bigint) {
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      const r = Keypair.generate();
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        feeMax,
+        pubkeyToField(r.publicKey)
+      );
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(r.publicKey).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: feeMax.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      const [pda, bump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+      return { res, pda, bump, recipient: r };
+    }
+
+    it("rejects relayer_fee_max above denomination / 50", async () => {
+      console.log("\n  [withdraw.ts] Generating ZK proof for above-cap fee...");
+      const { res, pda, bump, recipient: r } = await proveWithFeeMax(CAP + 1n);
+      console.log("  [withdraw.ts] Proof generated.");
+
+      try {
+        await program.methods
+          .withdraw(buildWithdrawArgs(res.proof, res.publicSignals, bump, CAP + 1n, 0n))
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            nullifierPda: pda,
+            recipient: r.publicKey,
+            treasury: treasury.publicKey,
+            relayer: relayer.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([relayer])
+          .rpc();
+        assert.fail("Should have rejected relayer_fee_max above the cap");
+      } catch (err: any) {
+        assert.include(
+          err.message,
+          "RelayerFeeMaxTooHigh",
+          `Expected RelayerFeeMaxTooHigh, got: ${err.message}`
+        );
+      }
+    });
+
+    it("accepts relayer_fee_max exactly at the cap", async () => {
+      console.log("\n  [withdraw.ts] Generating ZK proof for at-cap fee...");
+      const { res, pda, bump, recipient: r } = await proveWithFeeMax(CAP);
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const before = await provider.connection.getBalance(r.publicKey);
+      await program.methods
+        .withdraw(buildWithdrawArgs(res.proof, res.publicSignals, bump, CAP, CAP))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: pda,
+          recipient: r.publicKey,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+      const after = await provider.connection.getBalance(r.publicKey);
+      assert.equal(
+        after - before,
+        Number(DENOMINATION - TREASURY_FEE - CAP),
+        "boundary fee must be accepted and split correctly"
+      );
+      // Even at the cap the user keeps the large majority.
+      assert.isAbove(
+        (after - before) / Number(DENOMINATION),
+        0.97,
+        "user must retain >97% even at the maximum fee"
+      );
+      console.log(
+        `  [H-3] at-cap fee accepted; user kept ${(((after - before) / Number(DENOMINATION)) * 100).toFixed(2)}%`
+      );
     });
   });
 
