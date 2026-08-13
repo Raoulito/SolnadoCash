@@ -301,9 +301,10 @@ export function createApp({ connection, relayerKeypair, programId }) {
       if (msg.includes("FeeInvariantViolated") || msg.includes("0x1779")) {
         return res.status(400).json({ error: "FeeInvariantViolated" });
       }
-      if (msg.includes("PoolPaused") || msg.includes("0x1770")) {
-        return res.status(400).json({ error: "PoolPaused" });
-      }
+      // NOTE: withdraw deliberately ignores is_paused (BF-31) — pausing blocks
+      // deposits only, so a withdrawal can never fail with PoolPaused. Mapping it
+      // here implied a guarantee nobody had tested (M-3); it is asserted on-chain
+      // in tests/withdraw.ts instead.
 
       // Map Solana/network errors
       if (msg.includes("insufficient funds") || msg.includes("InsufficientFunds")) {

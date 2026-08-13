@@ -180,8 +180,6 @@ export default function Withdraw() {
         setProgressError('The relayer fee exceeds the maximum agreed in the proof. Try again with a fresh fee quote.');
       } else if (msg.includes('FeeInvariantViolated')) {
         setProgressError('Fee invariant check failed on-chain. This is a bug — please report it.');
-      } else if (msg.includes('PoolPaused')) {
-        setProgressError('This pool is currently paused by the admin. Withdrawals are temporarily disabled.');
       }
       // Relayer operational errors
       else if (msg.includes('RelayerInsufficientFunds')) {

@@ -1442,6 +1442,132 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     });
   });
 
+  // ── M-3: pausing must never block withdrawals ───────────────────────────────
+  //
+  // BF-31 and the README both promise "is_paused blocks new deposits but never
+  // blocks withdrawals — users can always recover their funds". withdraw.rs simply
+  // omits the is_paused check, which is correct, but nothing asserted it. Meanwhile
+  // the relayer and UI both mapped a PoolPaused error for withdrawals, which the
+  // instruction cannot return — a sign the guarantee was assumed, not verified.
+  describe("withdraw — paused pool (M-3)", () => {
+    it("completes a withdrawal while the pool is paused, and blocks deposits", async () => {
+      // Prepare a note and proof BEFORE pausing (deposits are blocked once paused).
+      const note = generateNote(DENOMINATION);
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      const r = Keypair.generate();
+      const wc = poseidonHash(
+        pubkeyToField(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToField(r.publicKey)
+      );
+      console.log("\n  [withdraw.ts] Generating ZK proof for M-3 paused-pool test...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToField(r.publicKey).toString(),
+          relayerAddress: pubkeyToField(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      // Pause the pool.
+      await program.methods
+        .pausePool()
+        .accountsPartial({ admin: admin.publicKey, pool: poolPda })
+        .signers([admin])
+        .rpc();
+
+      const poolAcc = await provider.connection.getAccountInfo(poolPda);
+      assert.equal(poolAcc!.data[8 + 123], 1, "pool should be paused");
+
+      // Deposits must now fail...
+      let depositBlocked = false;
+      try {
+        await program.methods
+          .deposit(Array.from(bigIntToBytes32(randomFieldElem())))
+          .accountsPartial({
+            pool: poolPda,
+            vault: vaultPda,
+            depositor: admin.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([admin])
+          .rpc();
+      } catch (err: any) {
+        depositBlocked = err.message.includes("PoolPaused");
+      }
+      assert.isTrue(depositBlocked, "deposits must be blocked while paused");
+
+      // ...but the withdrawal must still go through.
+      const [pda, bump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+      const before = await provider.connection.getBalance(r.publicKey);
+      await program.methods
+        .withdraw(
+          buildWithdrawArgs(
+            res.proof,
+            res.publicSignals,
+            bump,
+            RELAYER_FEE_MAX,
+            RELAYER_FEE_ACTUAL
+          )
+        )
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: pda,
+          recipient: r.publicKey,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+      const after = await provider.connection.getBalance(r.publicKey);
+      assert.equal(
+        after - before,
+        Number(DENOMINATION - TREASURY_FEE - RELAYER_FEE_ACTUAL),
+        "withdrawal must succeed and pay in full while paused"
+      );
+
+      // Restore state for any later test.
+      await program.methods
+        .unpausePool()
+        .accountsPartial({ admin: admin.publicKey, pool: poolPda })
+        .signers([admin])
+        .rpc();
+
+      console.log("  [M-3] withdrawal succeeded while paused; deposits blocked");
+    });
+  });
+
   // ── Stale root ────────────────────────────────────────────────────────────────
   describe("withdraw — stale root", () => {
     it("rejects proof with root not in history", async () => {
