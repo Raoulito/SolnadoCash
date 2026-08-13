@@ -275,26 +275,89 @@ pub fn process_withdraw(
         ErrorCode::FeeInvariantViolated
     );
 
-    // 13. Create nullifier PDA via System Program CPI
+    // 13. Create nullifier PDA via System Program CPI (H-1)
+    //
+    // `create_account` fails with SystemError::AccountAlreadyInUse when the target
+    // already holds lamports. The nullifier PDA address is fully determined by the
+    // note, so anyone who learns nullifier_hash before the withdrawal is finalised
+    // — the relayer, or a front-runner watching the transaction — could send it
+    // 1 lamport and freeze the note PERMANENTLY: no code path could allocate that
+    // address afterwards, and nobody holds a key for a PDA.
+    //
+    // So: fast path when the account is untouched, otherwise top up to the rent
+    // minimum and allocate + assign explicitly (the same pattern the SPL
+    // Associated Token Account program uses). Both paths end with an account of
+    // `nullifier_space` zeroed bytes owned by this program.
     let rent = Rent::get()?;
     let nullifier_space = 8 + NULLIFIER_SIZE;
     let nullifier_lamports = rent.minimum_balance(nullifier_space);
+    let nullifier_seeds: &[&[u8]] = &[
+        b"nullifier",
+        pool_info.key.as_ref(),
+        &args.nullifier_hash,
+        &[canonical_bump],
+    ];
+    let existing_lamports = nullifier_info.lamports();
 
-    invoke_signed(
-        &system_instruction::create_account(
-            relayer_info.key,
-            nullifier_info.key,
-            nullifier_lamports,
-            nullifier_space as u64,
-            program_id,
-        ),
-        &[
-            relayer_info.to_account_info(),
-            nullifier_info.to_account_info(),
-            system_program.to_account_info(),
-        ],
-        &[&[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash, &[canonical_bump]]],
-    )?;
+    if existing_lamports == 0 {
+        invoke_signed(
+            &system_instruction::create_account(
+                relayer_info.key,
+                nullifier_info.key,
+                nullifier_lamports,
+                nullifier_space as u64,
+                program_id,
+            ),
+            &[
+                relayer_info.to_account_info(),
+                nullifier_info.to_account_info(),
+                system_program.to_account_info(),
+            ],
+            &[nullifier_seeds],
+        )?;
+    } else {
+        // Step 6 already proved the account has no data. An account with data but
+        // a foreign owner is unreachable here (only this program can sign for the
+        // PDA), but assert it rather than rely on that reasoning.
+        require!(
+            *nullifier_info.owner == anchor_lang::solana_program::system_program::ID,
+            ErrorCode::NullifierAlreadySpent
+        );
+
+        if existing_lamports < nullifier_lamports {
+            // Relayer covers the shortfall; it is already a signer.
+            anchor_lang::solana_program::program::invoke(
+                &system_instruction::transfer(
+                    relayer_info.key,
+                    nullifier_info.key,
+                    nullifier_lamports - existing_lamports,
+                ),
+                &[
+                    relayer_info.to_account_info(),
+                    nullifier_info.to_account_info(),
+                    system_program.to_account_info(),
+                ],
+            )?;
+        }
+
+        invoke_signed(
+            &system_instruction::allocate(nullifier_info.key, nullifier_space as u64),
+            &[
+                nullifier_info.to_account_info(),
+                system_program.to_account_info(),
+            ],
+            &[nullifier_seeds],
+        )?;
+
+        invoke_signed(
+            &system_instruction::assign(nullifier_info.key, program_id),
+            &[
+                nullifier_info.to_account_info(),
+                system_program.to_account_info(),
+            ],
+            &[nullifier_seeds],
+        )?;
+    }
 
     // 14. Write nullifier account data
     let nullifier_account = NullifierAccount {

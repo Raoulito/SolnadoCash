@@ -15,6 +15,7 @@ import {
   PublicKey,
   SystemProgram,
   ComputeBudgetProgram,
+  Transaction,
   TransactionMessage,
   VersionedTransaction,
   LAMPORTS_PER_SOL,
@@ -687,6 +688,196 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
           "honest public signals must be canonical"
         );
       }
+    });
+  });
+
+  // ── H-1: nullifier PDA pre-funding griefing ──────────────────────────────────
+  //
+  // system_instruction::create_account fails with AccountAlreadyInUse when the
+  // target already holds lamports. The nullifier PDA address is determined by the
+  // note, so anyone who sees nullifier_hash before the withdrawal lands (the
+  // relayer, or a front-runner) could send it 1 lamport and freeze the note
+  // forever. The withdrawal must survive a pre-funded PDA.
+  describe("withdraw — pre-funded nullifier PDA (H-1)", () => {
+    it("completes a withdrawal even when the nullifier PDA was pre-funded", async () => {
+      const note = generateNote(DENOMINATION);
+
+      await program.methods
+        .deposit(Array.from(bigIntToBytes32(note.commitment)))
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          depositor: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+
+      const { pathElements, pathIndices, root } = jsTree.insert(note.commitment);
+
+      let griefRecipient: Keypair;
+      do {
+        griefRecipient = Keypair.generate();
+      } while (pubkeyToBigInt(griefRecipient.publicKey) >= BN254_FIELD_ORDER);
+
+      const wc = poseidonHash(
+        pubkeyToBigInt(relayer.publicKey),
+        RELAYER_FEE_MAX,
+        pubkeyToBigInt(griefRecipient.publicKey)
+      );
+
+      console.log("\n  [withdraw.ts] Generating ZK proof for H-1 griefing test...");
+      const res = await snarkjs.groth16.fullProve(
+        {
+          nullifierHash: note.nullifierHash.toString(),
+          root: root.toString(),
+          withdrawalCommitment: wc.toString(),
+          nullifier: note.nullifier.toString(),
+          secret: note.secret.toString(),
+          denomination: DENOMINATION.toString(),
+          pathElements: pathElements.map((x) => x.toString()),
+          pathIndices: pathIndices.map((x) => x.toString()),
+          recipient: pubkeyToBigInt(griefRecipient.publicKey).toString(),
+          relayerAddress: pubkeyToBigInt(relayer.publicKey).toString(),
+          relayerFeeMax: RELAYER_FEE_MAX.toString(),
+        },
+        WITHDRAW_WASM,
+        WITHDRAW_ZKEY
+      );
+      console.log("  [withdraw.ts] Proof generated.");
+
+      const [griefPda, griefBump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+
+      // ── The attack: fund the nullifier PDA so create_account fails ──
+      // The runtime forbids leaving an account below rent-exemption, so the
+      // cheapest grief is the rent-exempt minimum for a 0-byte account
+      // (~890,880 lamports ≈ 0.00089 SOL) — still ~1:1100 against a 1 SOL note.
+      const attacker = Keypair.generate();
+      const airdropSig = await provider.connection.requestAirdrop(
+        attacker.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdropSig);
+
+      const griefAmount =
+        await provider.connection.getMinimumBalanceForRentExemption(0);
+
+      const griefTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: attacker.publicKey,
+          toPubkey: griefPda,
+          lamports: griefAmount,
+        })
+      );
+      await provider.sendAndConfirm(griefTx, [attacker]);
+
+      const preFunded = await provider.connection.getAccountInfo(griefPda);
+      assert.ok(preFunded !== null, "PDA should now exist with lamports");
+      assert.equal(
+        preFunded!.lamports,
+        griefAmount,
+        "PDA should hold the griefing lamports"
+      );
+      assert.equal(preFunded!.data.length, 0, "PDA should still have no data");
+      assert.equal(
+        preFunded!.owner.toBase58(),
+        SystemProgram.programId.toBase58(),
+        "pre-funded PDA is system-owned"
+      );
+
+      // ── The withdrawal must still go through ──
+      const recipientBefore = await provider.connection.getBalance(
+        griefRecipient.publicKey
+      );
+
+      const args = buildWithdrawArgs(
+        res.proof,
+        res.publicSignals,
+        griefBump,
+        RELAYER_FEE_MAX,
+        RELAYER_FEE_ACTUAL
+      );
+
+      await program.methods
+        .withdraw(args)
+        .accountsPartial({
+          pool: poolPda,
+          vault: vaultPda,
+          nullifierPda: griefPda,
+          recipient: griefRecipient.publicKey,
+          treasury: treasury.publicKey,
+          relayer: relayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([relayer])
+        .rpc();
+
+      const recipientAfter = await provider.connection.getBalance(
+        griefRecipient.publicKey
+      );
+      const expectedUserAmount =
+        Number(DENOMINATION) - Number(TREASURY_FEE) - Number(RELAYER_FEE_ACTUAL);
+      assert.equal(
+        recipientAfter - recipientBefore,
+        expectedUserAmount,
+        "recipient must receive the full user amount despite the griefing attempt"
+      );
+
+      // The nullifier account must be properly initialised, not left half-built.
+      const after = await provider.connection.getAccountInfo(griefPda);
+      assert.ok(after !== null, "nullifier account must exist");
+      assert.equal(
+        after!.owner.toBase58(),
+        program.programId.toBase58(),
+        "nullifier account must be owned by the program"
+      );
+      assert.equal(
+        after!.data.length,
+        8 + 72,
+        "nullifier account must be allocated to 8 + NULLIFIER_SIZE bytes"
+      );
+      // The attacker's stray lamport is absorbed, so the account stays rent-exempt.
+      const minRent = await provider.connection.getMinimumBalanceForRentExemption(
+        8 + 72
+      );
+      assert.isAtLeast(
+        after!.lamports,
+        minRent,
+        "nullifier account must be rent-exempt"
+      );
+      // Stored pool must match — proves step 14 wrote real data.
+      assert.equal(
+        new PublicKey(after!.data.subarray(8, 40)).toBase58(),
+        poolPda.toBase58(),
+        "nullifier account must record its pool"
+      );
+
+      console.log(
+        `  [H-1] withdrawal succeeded despite pre-funded PDA; account now ${after!.data.length}B, ${after!.lamports} lamports`
+      );
+    });
+
+    it("still blocks a replay after the pre-funded PDA was consumed", async () => {
+      // Sanity: the fallback path must not weaken the double-spend guard.
+      // (The PDA now has data, so step 6 rejects it.)
+      const note = generateNote(DENOMINATION);
+      const [pda] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("nullifier"),
+          poolPda.toBytes(),
+          bigIntToBytes32(note.nullifierHash),
+        ],
+        program.programId
+      );
+      const info = await provider.connection.getAccountInfo(pda);
+      assert.isNull(info, "unused nullifier PDA should not exist yet");
     });
   });
 
