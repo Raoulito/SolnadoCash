@@ -914,6 +914,60 @@ async function verifyM3(program, provider, fx) {
   record("M-3", "pool unpaused again", after.data[8 + 123] === 0, "is_paused = 0");
 }
 
+// ── N-3: denomination floor keeps deposits withdrawable ──────────────────────
+async function verifyN3(program, provider) {
+  console.log("\n── N-3: denomination floor (deposits must stay withdrawable) ──");
+
+  const minRent = await provider.connection.getMinimumBalanceForRentExemption(0);
+  record(
+    "N-3",
+    "runtime rent floor for a fresh 0-byte account",
+    minRent === 890880,
+    `${minRent} lamports`
+  );
+
+  // A pool above the old 500-lamport limit but below the real floor must be refused.
+  const tooLow = new anchor.BN(900_000);
+  const [badPool] = findPoolPda(
+    provider.wallet.publicKey,
+    tooLow,
+    9,
+    program.programId
+  );
+  const [badVault] = findVaultPda(badPool, program.programId);
+  await expectReject(
+    "N-3",
+    "pool below the payout floor is rejected",
+    "DenominationTooLow",
+    () =>
+      program.methods
+        .initializePool(tooLow, 9)
+        .accountsPartial({
+          admin: provider.wallet.publicKey,
+          pool: badPool,
+          vault: badVault,
+          treasury: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+  );
+
+  // The deployed pools must all be comfortably above the floor.
+  for (const [label, denom] of [
+    ["0.1 SOL", 100_000_000n],
+    ["1 SOL", 1_000_000_000n],
+    ["10 SOL", 10_000_000_000n],
+  ]) {
+    const worst = denom - denom / 500n - denom / 50n;
+    record(
+      "N-3",
+      `deployed ${label} pool clears the payout floor`,
+      worst >= BigInt(minRent),
+      `worst-case payout ${worst} >= ${minRent}`
+    );
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -963,6 +1017,9 @@ async function main() {
     );
   }
 
+  if (wanted("N-3")) {
+    await verifyN3(program, provider);
+  }
   if (wanted("M-2")) {
     console.log("\nPreparing fixtures for M-2 (one committed to the vault)...");
     const [poolPda] = findPoolPda(
