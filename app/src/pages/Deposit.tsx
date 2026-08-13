@@ -4,6 +4,7 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { PublicKey } from '@solana/web3.js';
 import { generateNote, initPoseidon, poseidonHash } from '@solnadocash/sdk';
 import PoolSelector from '../components/PoolSelector';
+import AnonymitySet from '../components/AnonymitySet';
 import NoteDisplay from '../components/NoteDisplay';
 import { usePoolInfo } from '../hooks/usePool';
 import { getProgram, buildDepositTx } from '../utils/program';
@@ -91,13 +92,17 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             </div>
             {poolInfo && (
               <div className="flex justify-between text-sm">
-                <span className="text-zinc-400">Pool deposits</span>
+                <span className="text-zinc-400">Pool capacity used</span>
                 <span className="text-zinc-200">
                   {poolInfo.nextIndex.toLocaleString()} / 950,000
                 </span>
               </div>
             )}
           </div>
+        )}
+
+        {poolInfo && (
+          <AnonymitySet depositCount={poolInfo.nextIndex} context="deposit" />
         )}
 
         {/* T42: Saturation warning */}

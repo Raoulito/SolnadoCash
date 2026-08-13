@@ -14,6 +14,8 @@ import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndi
 import { rebuildMerkleTree } from '../utils/merkle';
 import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
 import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice';
+import AnonymitySet from '../components/AnonymitySet';
+import { usePoolInfo } from '../hooks/usePool';
 import { explorerTxUrl } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
@@ -81,6 +83,9 @@ export default function Withdraw() {
   const isOwnWallet =
     !!connectedWallet && recipient.trim() === connectedWallet.toBase58();
   const sameSession = depositedThisSession();
+
+  // M-1: surface the real anonymity set for the pool this note belongs to.
+  const { info: poolInfo } = usePoolInfo(parsedNote?.poolAddress ?? null);
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   const executeWithdraw = useCallback(async () => {
@@ -437,6 +442,10 @@ export default function Withdraw() {
             The ZK proof is computed in your browser — your secret note never leaves this device.
           </p>
         </div>
+
+        {poolInfo && (
+          <AnonymitySet depositCount={poolInfo.nextIndex} context="withdraw" />
+        )}
 
         <PrivacyNotice sameSession={sameSession} />
 
