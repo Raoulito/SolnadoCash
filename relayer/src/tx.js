@@ -20,6 +20,8 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IDL_PATH = join(__dirname, "../../target/idl/solnadocash.json");
 
+import { COMPUTE_UNITS as COMPUTE_UNIT_LIMIT } from "./fees.js";
+
 const BN254_Fq =
   21888242871839275222246405745257275088696311157297823662689037894645226208583n;
 
@@ -90,6 +92,8 @@ export function findVaultPda(poolPda, programId) {
  * @param {string[]} params.publicSignals - [nullifierHash, root, withdrawalCommitment]
  * @param {bigint} params.relayerFeeMax - Max fee committed in proof
  * @param {bigint} params.relayerFeeTaken - Actual fee the relayer takes (<= max)
+ * @param {number} [params.priorityFeePerCU] - Priority fee in micro-lamports per CU.
+ *   Must match what was charged in relayerFeeTaken (H-3).
  * @returns {Promise<string>} Transaction signature
  */
 export async function submitWithdraw({
@@ -103,6 +107,7 @@ export async function submitWithdraw({
   publicSignals,
   relayerFeeMax,
   relayerFeeTaken,
+  priorityFeePerCU = 0,
 }) {
   const idl = JSON.parse(readFileSync(IDL_PATH, "utf8"));
   const wallet = new anchor.Wallet(relayerKeypair);
@@ -151,10 +156,21 @@ export async function submitWithdraw({
     })
     .instruction();
 
-  // Build versioned transaction with compute budget
-  const budgetIx = ComputeBudgetProgram.setComputeUnitLimit({
-    units: 200_000,
-  });
+  // Build versioned transaction with compute budget.
+  // The priority fee is quoted to the user in lamports via computeRelayerFeeMax,
+  // so it must actually be attached — otherwise the relayer charges for a
+  // priority fee it never pays (H-3). setComputeUnitPrice takes micro-lamports
+  // per CU, the same unit getRecentPrioritizationFees reports.
+  const budgetIxs = [
+    ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }),
+  ];
+  if (priorityFeePerCU > 0) {
+    budgetIxs.push(
+      ComputeBudgetProgram.setComputeUnitPrice({
+        microLamports: priorityFeePerCU,
+      })
+    );
+  }
 
   const { blockhash, lastValidBlockHeight } =
     await connection.getLatestBlockhash("confirmed");
@@ -162,7 +178,7 @@ export async function submitWithdraw({
   const msg = new TransactionMessage({
     payerKey: relayerKeypair.publicKey,
     recentBlockhash: blockhash,
-    instructions: [budgetIx, ix],
+    instructions: [...budgetIxs, ix],
   }).compileToV0Message();
 
   const vTx = new VersionedTransaction(msg);

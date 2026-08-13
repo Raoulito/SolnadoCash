@@ -10,7 +10,15 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { PublicKey } from "@solana/web3.js";
-import { computeRelayerFeeMax, computeTreasuryFee, computeMinUserReceives } from "./fees.js";
+import {
+  computeRelayerFeeMax,
+  computeTreasuryFee,
+  computeMinUserReceives,
+  getPriorityFeePerCU,
+  priorityFeeLamports,
+  BASE_FEE,
+  NULLIFIER_RENT,
+} from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
 
@@ -101,6 +109,20 @@ export function createApp({ connection, relayerKeypair, programId }) {
 
       const relayerFeeMax = await computeRelayerFeeMax(connection);
       const treasuryFee = computeTreasuryFee(denomination);
+
+      // Never quote a fee the pool cannot honour. The on-chain guard caps
+      // relayer_fee_max at denomination/50; refuse to serve rather than hand the
+      // user a ceiling that would make their proof unusable (H-3).
+      const onChainCap = denomination / 50n;
+      if (BigInt(relayerFeeMax) > onChainCap) {
+        return res.status(503).json({
+          error: "FeeAbovePoolCap",
+          message:
+            "Network fees currently exceed this pool's maximum relayer fee. Try again later or use a larger denomination.",
+          relayerFeeMax: relayerFeeMax.toString(),
+          cap: onChainCap.toString(),
+        });
+      }
       const estimatedUserReceives = computeMinUserReceives(
         denomination,
         BigInt(relayerFeeMax)
@@ -170,11 +192,15 @@ export function createApp({ connection, relayerKeypair, programId }) {
       const treasuryBytes = poolInfo.data.subarray(96, 128);
       const treasuryAddress = new PublicKey(treasuryBytes);
 
-      // Compute actual fee to take
+      // Compute the fee to take. An honest relayer charges its REAL cost, not the
+      // ceiling the user agreed to (H-3): relayerFeeMax exists to absorb fee
+      // movement between quote and submission, not to be claimed in full.
       const feeMax = BigInt(relayerFeeMax || (await computeRelayerFeeMax(connection)));
-      const feeTaken = BigInt(await computeRelayerFeeMax(connection));
-      // Take the lesser of our computed fee and the max the user agreed to
-      const actualFee = feeTaken < feeMax ? feeTaken : feeMax;
+      const priorityFeePerCU = await getPriorityFeePerCU(connection);
+      const realCost = BigInt(
+        BASE_FEE + priorityFeeLamports(priorityFeePerCU) + NULLIFIER_RENT
+      );
+      const actualFee = realCost < feeMax ? realCost : feeMax;
 
       // T29 — Check relayer balance before submitting
       const balance = await connection.getBalance(relayerKeypair.publicKey);
@@ -205,6 +231,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
           publicSignals,
           relayerFeeMax: feeMax,
           relayerFeeTaken: actualFee,
+          priorityFeePerCU,
         });
 
         res.json({
