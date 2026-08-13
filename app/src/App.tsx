@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { NETWORK } from './config';
+import { NETWORK, fatalConfigProblems } from './config';
 import Onboarding from './pages/Onboarding';
 import Deposit from './pages/Deposit';
 import Withdraw from './pages/Withdraw';
@@ -34,6 +34,29 @@ export default function App() {
   const handleNoteLock = useCallback((locked: boolean) => {
     setNoteLocked(locked);
   }, []);
+
+  // M-8: refuse to operate on a real-money network with development config
+  // rather than silently pointing mainnet funds at a local relayer.
+  const configProblems = fatalConfigProblems();
+  if (configProblems.length > 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="max-w-lg bg-red-500/10 border border-red-500/30 rounded-2xl p-6">
+          <h1 className="text-red-400 font-semibold mb-2">Unsafe configuration</h1>
+          <p className="text-red-400/80 text-sm mb-3">
+            This build targets {NETWORK} but is configured for development. Fix the
+            following before using real funds:
+          </p>
+          <ul className="text-red-400/70 text-xs space-y-2 list-disc pl-4">
+            {configProblems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+          <p className="text-red-400/60 text-xs mt-4">See app/.env.example.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
