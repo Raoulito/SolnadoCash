@@ -511,6 +511,80 @@ async function verifyC1(program, provider, fx) {
   );
 }
 
+// ── H-1: pre-funded nullifier PDA griefing ───────────────────────────────────
+async function verifyH1(program, provider, fx) {
+  console.log("\n── H-1: pre-funded nullifier PDA (permanent freeze) ──");
+
+  const [pda] = findNullifierPda(
+    fx.poolPda,
+    Buffer.from(fx.baseArgs.nullifierHash),
+    program.programId
+  );
+
+  // The runtime forbids leaving an account below rent-exemption, so the cheapest
+  // grief is the rent-exempt minimum for a 0-byte account.
+  const griefAmount = await provider.connection.getMinimumBalanceForRentExemption(0);
+  const tx = new anchor.web3.Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: provider.wallet.publicKey,
+      toPubkey: pda,
+      lamports: griefAmount,
+    })
+  );
+  await provider.sendAndConfirm(tx, []);
+
+  const pre = await provider.connection.getAccountInfo(pda);
+  record(
+    "H-1",
+    "nullifier PDA can be pre-funded by a third party (attack precondition)",
+    pre !== null && pre.lamports === griefAmount && pre.data.length === 0,
+    `${griefAmount} lamports, ${pre ? pre.data.length : "?"}B data`
+  );
+
+  const recipBefore = await provider.connection.getBalance(fx.recipient.publicKey);
+  try {
+    const sig = await withdrawCall(program, fx, fx.baseArgs).rpc();
+    const recipAfter = await provider.connection.getBalance(fx.recipient.publicKey);
+    const expectedUser = DENOMINATION_BI - TREASURY_FEE - RELAYER_FEE_TAKEN;
+    record(
+      "H-1",
+      "withdrawal completes despite the pre-funded PDA",
+      BigInt(recipAfter - recipBefore) === expectedUser,
+      `recipient +${recipAfter - recipBefore} (expected ${expectedUser}), tx ${sig.slice(0, 12)}…`
+    );
+
+    const post = await provider.connection.getAccountInfo(pda);
+    const minRent = await provider.connection.getMinimumBalanceForRentExemption(80);
+    record(
+      "H-1",
+      "nullifier account correctly initialised by the fallback path",
+      post !== null &&
+        post.owner.equals(program.programId) &&
+        post.data.length === 80 &&
+        post.lamports >= minRent,
+      post
+        ? `owner=${post.owner.toBase58().slice(0, 8)}… ${post.data.length}B ${post.lamports} lamports`
+        : "missing"
+    );
+    record(
+      "H-1",
+      "nullifier account records its pool",
+      post !== null &&
+        new PublicKey(post.data.subarray(8, 40)).equals(fx.poolPda),
+      "pool field matches"
+    );
+  } catch (err) {
+    record("H-1", "withdrawal completes despite the pre-funded PDA", false, err.message);
+  }
+
+  await expectReject(
+    "H-1",
+    "double-spend guard still holds after the fallback path",
+    "NullifierAlreadySpent",
+    () => withdrawCall(program, fx, fx.baseArgs).rpc()
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!fs.existsSync(WITHDRAW_WASM) || !fs.existsSync(WITHDRAW_ZKEY)) {
@@ -540,9 +614,16 @@ async function main() {
   }
 
   await initPoseidon();
-  const fx = await setupFixture(program, provider);
 
-  if (wanted("C-1")) await verifyC1(program, provider, fx);
+  // Each group spends its own note, so build a fresh fixture per group.
+  if (wanted("C-1")) {
+    console.log("\nPreparing fixture for C-1...");
+    await verifyC1(program, provider, await setupFixture(program, provider));
+  }
+  if (wanted("H-1")) {
+    console.log("\nPreparing fixture for H-1...");
+    await verifyH1(program, provider, await setupFixture(program, provider));
+  }
 
   console.log("\n═══════════════════════════════════════════════════════════");
   const failed = results.filter((r) => !r.ok);
