@@ -64,7 +64,7 @@ signature. Compromise of that one key equals total loss.
 roles onto distinct keys. Note the constraint in D-9 below: the treasury cannot be a
 program-owned multisig vault.
 
-### F-3 — Root-ring flush griefing (Low, by design)
+### F-3 — Root-ring flush griefing (Low) — FIXED (impact removed client-side)
 
 `state.rs:7`, `withdraw.rs:279-284`. 256 deposits rotate every prior root out, invalidating
 proofs generated but not yet submitted (`RootNotFound`). Capital is recoverable, so the cost
@@ -83,7 +83,7 @@ write capability the instruction never uses, so a later edit could mutate pool s
 without that appearing in the account declaration. Now declared read-only. Callers may
 still pass it writable; nothing breaks.
 
-### F-5 — Treasury aliasing a future nullifier PDA (Informational)
+### F-5 — Treasury aliasing a future nullifier PDA (Informational) — FIXED
 
 `lib.rs:91`, `withdraw.rs:442`. A pool creator can set `treasury` to the PDA a specific
 nullifier hash will later occupy — it is system-owned and empty at creation, so
@@ -196,3 +196,49 @@ verified end to end.
   conclude that is inadequate. Pool PDAs include the admin key, so sets do not merge across
   deployers.
 - **Any mainnet claim.** Everything here was verified locally or on devnet.
+
+
+---
+
+## Follow-up fixes (after the pass-3 report)
+
+### F-5 — FIXED (`7a3479b`)
+`withdraw` now rejects any payout target equal to the nullifier PDA
+(`DuplicateAccount`, 6026). The treasury case was the only one a third party could set up:
+the PDA is system-owned and empty at pool creation, so the `SystemAccount` constraint
+accepts it, and every withdrawal of the chosen note would then burn the protocol fee into an
+account no instruction can drain. Recipient and relayer are self-inflicted but cost one
+comparison each to exclude.
+
+`Pubkey::is_on_curve()` cannot be used to reject PDAs generically: it is `unimplemented!()`
+under `target_os = "solana"` and panics on-chain (solana-program 1.18.26, `pubkey.rs:163`).
+
+Proven in `litesvm-tests/tests/f5_treasury_alias.rs` against the real program binary, and on
+devnet (`devnet_verify.js F-5`). The first devnet attempt returned 6007
+(`InvalidWithdrawalCommitment`) rather than 6026, because the commitment check precedes the
+distinctness check and the fixture committed to a different recipient — the guard was never
+reached. Asserting exact error codes is what caught it.
+
+### F-3 — FIXED at the impact level (`d8bcc76`)
+The on-chain behaviour is unchanged and still correct: a rotated-out root fails closed and
+the note stays unspent. What made the griefing worthwhile was the UI, which required every
+affected user to notice an error and click retry. The app now rebuilds the tree and reproves
+automatically (2 extra attempts), so one attacker action no longer blocks every in-flight
+withdrawal — 256 deposits are needed per attempt rather than per attacker.
+
+Widening `ROOT_HISTORY_SIZE` was rejected: the pool account is 8,976 bytes and 512 roots
+would add 8,192, exceeding the 10,240-byte single-instruction creation limit.
+
+### H-5 — scalability half addressed (`496dea7`), indexer still owed
+Leaves are cached locally and append-only, so a repeat withdrawal fetches only deposits made
+since the last visit. The cache is untrusted: the tree is still verified against the
+on-chain root and leaf count, so a stale, gapped or tampered cache costs time, not
+correctness. A cold cache still pays O(deposits) — an indexer remains the real fix.
+
+### L-3 — deliberately NOT fixed on-chain
+Rejecting duplicate commitments on-chain needs a per-commitment PDA, which would add a
+rent-exempt account (~890,880 lamports) and an account slot to every deposit, permanently.
+A duplicate is only reachable by reusing your own note or by copying someone else's
+commitment, and copying it burns the copier's own SOL while granting nothing: the secret is
+still unknown, so only the original owner can withdraw, once. The cost is not proportionate
+to the harm; client-side detection stays.
