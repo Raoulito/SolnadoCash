@@ -4,9 +4,15 @@
 
 import { Connection, PublicKey } from '@solana/web3.js';
 import { BorshCoder, EventParser } from '@coral-xyz/anchor';
-import { initPoseidon, MerkleTree, verifyTreeMatchesPool } from '@solnadocash/sdk';
+import {
+  initPoseidon,
+  MerkleTree,
+  readPoolTreeState,
+  verifyTreeMatchesPool,
+} from '@solnadocash/sdk';
 import IDL from '../idl/solnadocash.json';
 import { PROGRAM_ID } from '../config';
+import { clearCache, leafToBigInt, loadCache, saveCache } from './leafCache';
 
 interface DepositEventData {
   leaf: number[];
@@ -49,44 +55,27 @@ async function mapPool<T, R>(
 }
 
 /**
- * Fetch all DepositEvent logs for a pool and rebuild the Merkle tree.
+ * Scan pool signatures and return the deposit leaves found, plus the newest signature seen.
  *
- * The result is verified against on-chain pool state before it is returned
- * (H-5): a tree rebuilt from transaction logs is silently wrong whenever a
- * deposit is missed, and public RPC endpoints prune history and rate-limit. An
- * unverified tree yields a proof against a root the chain never had, which fails
- * as RootNotFound/InvalidProof and cannot be recovered by retrying.
- *
- * For production, replace log scanning with an indexer — this is O(deposits) RPC
- * round-trips.
+ * `until` bounds the scan to transactions newer than a signature already processed, which is
+ * what makes an incremental rebuild possible.
  */
-export async function rebuildMerkleTree(
+async function scanDeposits(
   connection: Connection,
   poolAddress: PublicKey,
+  until: string | undefined,
   onProgress?: (loaded: number, total: number) => void
-): Promise<MerkleTree> {
-  await initPoseidon();
-
+): Promise<{ deposits: { leaf: bigint; leafIndex: number }[]; newestSignature?: string }> {
   const programId = new PublicKey(PROGRAM_ID);
-  const coder = new BorshCoder(IDL as never);
-  const eventParser = new EventParser(programId, coder);
+  const eventParser = new EventParser(programId, new BorshCoder(IDL as never));
 
-  // Read pool state first so the rebuild can be checked against it.
-  const poolAccount = await connection.getAccountInfo(poolAddress);
-  if (!poolAccount) {
-    throw new Error(
-      'Pool account not found on-chain. Check the pool address in your note.'
-    );
-  }
-
-  // Fetch all signatures for the pool (paginated, newest first)
   const allSignatures = [];
   let before: string | undefined;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await connection.getSignaturesForAddress(
       poolAddress,
-      { before, limit: 1000 },
+      { before, until, limit: 1000 },
       'confirmed'
     );
     if (batch.length === 0) break;
@@ -94,12 +83,12 @@ export async function rebuildMerkleTree(
     before = batch[batch.length - 1].signature;
   }
 
-  // Reverse to chronological order (oldest first)
+  // Newest first from the RPC; the newest is the bound for the next incremental scan.
+  const newestSignature = allSignatures[0]?.signature;
   allSignatures.reverse();
 
-  // Parse deposit events. Fetched concurrently — one sequential round-trip per
-  // signature is unusably slow and trips rate limits well before the pool's
-  // advertised capacity.
+  // Fetched concurrently — one sequential round-trip per signature is unusably slow and
+  // trips rate limits well before the pool's advertised capacity.
   const successful = allSignatures.filter((s) => !s.err);
   const txs = await mapPool(
     successful,
@@ -112,32 +101,131 @@ export async function rebuildMerkleTree(
     onProgress
   );
 
-  const deposits: { leaf: number[]; leafIndex: number }[] = [];
+  const deposits: { leaf: bigint; leafIndex: number }[] = [];
   for (const tx of txs) {
     if (!tx?.meta?.logMessages) continue;
     for (const event of eventParser.parseLogs(tx.meta.logMessages)) {
       if (event.name === 'DepositEvent' || event.name === 'depositEvent') {
         const data = event.data as unknown as DepositEventData;
         deposits.push({
-          leaf: Array.from(data.leaf),
+          leaf: bytesToBigInt(Array.from(data.leaf)),
           leafIndex: Number(data.leafIndex),
         });
       }
     }
   }
+  return { deposits, newestSignature };
+}
 
-  // Sort by leaf index to ensure correct insertion order
-  deposits.sort((a, b) => a.leafIndex - b.leafIndex);
-
-  // Build the Merkle tree
+/** Build a tree from a dense, index-ordered leaf array. */
+function buildTree(leaves: bigint[]): MerkleTree {
   const tree = new MerkleTree(20);
-  for (const deposit of deposits) {
-    tree.insert(bytesToBigInt(deposit.leaf));
+  for (const leaf of leaves) tree.insert(leaf);
+  return tree;
+}
+
+/**
+ * Fetch a pool's deposit leaves and rebuild the Merkle tree.
+ *
+ * Two properties matter here and both are enforced below rather than assumed:
+ *
+ * 1. The result is verified against on-chain pool state before it is returned (H-5). A tree
+ *    rebuilt from transaction logs is silently wrong whenever a deposit is missed, and
+ *    public RPC endpoints prune history and rate-limit. An unverified tree yields a proof
+ *    against a root the chain never had, which fails as RootNotFound/InvalidProof and cannot
+ *    be recovered by retrying.
+ *
+ * 2. Known leaves are cached locally, so a repeat withdrawal costs one round-trip per NEW
+ *    deposit instead of per deposit ever made. The cache is never trusted: if the rebuilt
+ *    root does not match the chain, it is discarded and a full scan runs once. So the cache
+ *    can only affect speed, never correctness.
+ *
+ * This still does not scale to a full pool — a cold cache pays O(deposits). Serving leaves
+ * from an indexer is the actual fix.
+ */
+export async function rebuildMerkleTree(
+  connection: Connection,
+  poolAddress: PublicKey,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<MerkleTree> {
+  await initPoseidon();
+
+  // Read pool state first so the rebuild can be checked against it.
+  const poolAccount = await connection.getAccountInfo(poolAddress);
+  if (!poolAccount) {
+    throw new Error(
+      'Pool account not found on-chain. Check the pool address in your note.'
+    );
+  }
+  const onChain = readPoolTreeState(poolAccount.data);
+  const poolKey = poolAddress.toBase58();
+
+  const cached = loadCache(PROGRAM_ID, poolKey);
+  let leaves = cached.leaves.map(leafToBigInt);
+  let newestSignature = cached.lastSignature;
+
+  // Nothing new on-chain: the cache alone is enough, so no transaction fetches at all.
+  // Still verified below, so a stale or tampered cache cannot slip through.
+  if (leaves.length !== onChain.nextIndex) {
+    const scan = await scanDeposits(connection, poolAddress, cached.lastSignature, onProgress);
+    newestSignature = scan.newestSignature ?? cached.lastSignature;
+
+    // Merge by leaf index. Indices are authoritative and assigned on-chain, so this
+    // tolerates duplicates and out-of-order delivery.
+    const byIndex = new Map<number, bigint>();
+    leaves.forEach((leaf, i) => byIndex.set(i, leaf));
+    for (const d of scan.deposits) byIndex.set(d.leafIndex, d.leaf);
+
+    // The tree can only be built from a dense prefix; a gap means the incremental scan
+    // missed history, so fall back to a single full rescan from scratch.
+    const dense: bigint[] = [];
+    for (let i = 0; i < byIndex.size; i++) {
+      const leaf = byIndex.get(i);
+      if (leaf === undefined) break;
+      dense.push(leaf);
+    }
+
+    if (dense.length !== onChain.nextIndex && cached.leaves.length > 0) {
+      clearCache(PROGRAM_ID, poolKey);
+      const full = await scanDeposits(connection, poolAddress, undefined, onProgress);
+      newestSignature = full.newestSignature;
+      const fresh = new Map<number, bigint>();
+      for (const d of full.deposits) fresh.set(d.leafIndex, d.leaf);
+      leaves = [];
+      for (let i = 0; i < fresh.size; i++) {
+        const leaf = fresh.get(i);
+        if (leaf === undefined) break;
+        leaves.push(leaf);
+      }
+    } else {
+      leaves = dense;
+    }
   }
 
-  // Authoritative check: leaf count and root must agree with the chain.
-  // Throws with an actionable message if they do not.
-  verifyTreeMatchesPool(tree, poolAccount.data);
+  let tree = buildTree(leaves);
 
+  // Authoritative check: leaf count and root must agree with the chain.
+  try {
+    verifyTreeMatchesPool(tree, poolAccount.data);
+  } catch (e) {
+    // The cache was the only untrusted input, so retry once without it before giving up.
+    if (cached.leaves.length === 0) throw e;
+    clearCache(PROGRAM_ID, poolKey);
+    const full = await scanDeposits(connection, poolAddress, undefined, onProgress);
+    const fresh = new Map<number, bigint>();
+    for (const d of full.deposits) fresh.set(d.leafIndex, d.leaf);
+    const rebuilt: bigint[] = [];
+    for (let i = 0; i < fresh.size; i++) {
+      const leaf = fresh.get(i);
+      if (leaf === undefined) break;
+      rebuilt.push(leaf);
+    }
+    leaves = rebuilt;
+    newestSignature = full.newestSignature;
+    tree = buildTree(leaves);
+    verifyTreeMatchesPool(tree, poolAccount.data); // throws with an actionable message
+  }
+
+  saveCache(PROGRAM_ID, poolKey, leaves, newestSignature);
   return tree;
 }

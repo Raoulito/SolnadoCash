@@ -4,6 +4,8 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'path';
 
 export default defineConfig({
+  // jsdom gives the leaf-cache tests a real localStorage.
+  test: { environment: 'jsdom', include: ['src/**/*.test.ts'] },
   plugins: [
     react(),
     nodePolyfills({
