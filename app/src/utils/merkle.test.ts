@@ -195,6 +195,37 @@ describe('rebuildMerkleTree leaf cache', () => {
     expect(counters.getTransaction).toBeGreaterThan(0); // it rescanned
   });
 
+  it('recovers when the cache holds MORE leaves than the chain reports', async () => {
+    // Plausible after a pool is redeployed at a reused address, or a cache carried across a
+    // network switch. The stale surplus must not survive into the tree.
+    saveCache(PROGRAM_ID, POOL.toBase58(), LEAVES, 'sig0039');
+    const shorter = LEAVES.slice(0, 12);
+
+    const counters = { getTransaction: 0, getSignaturesForAddress: 0 };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tree = await rebuildMerkleTree(mockConnection(shorter, counters) as any, POOL);
+
+    expect(tree.nextIndex).toBe(shorter.length);
+    const expected = new MerkleTree(20);
+    for (const l of shorter) expected.insert(l);
+    expect(tree.root).toBe(expected.root);
+  });
+
+  it('still succeeds when the cached signature is unknown to the RPC (pruned)', async () => {
+    // getSignaturesForAddress ignores an `until` it cannot find, so the scan returns full
+    // history. The merge must cope rather than double-count or leave a gap.
+    saveCache(PROGRAM_ID, POOL.toBase58(), LEAVES.slice(0, 20), 'sig-that-no-longer-exists');
+
+    const counters = { getTransaction: 0, getSignaturesForAddress: 0 };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tree = await rebuildMerkleTree(mockConnection(LEAVES, counters) as any, POOL);
+
+    expect(tree.nextIndex).toBe(LEAVES.length);
+    const expected = new MerkleTree(20);
+    for (const l of LEAVES) expected.insert(l);
+    expect(tree.root).toBe(expected.root);
+  });
+
   it('recovers from a cache with a hole rather than building a short tree', async () => {
     // Truncated cache with a signature bound implying everything is known.
     saveCache(PROGRAM_ID, POOL.toBase58(), LEAVES.slice(0, 10), 'sig0039');
