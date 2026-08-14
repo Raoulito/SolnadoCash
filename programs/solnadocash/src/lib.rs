@@ -37,8 +37,12 @@ pub struct Benchmark<'info> {
 // Thin accounts shim for bare-metal withdraw — all validation done in withdraw::process_withdraw
 #[derive(Accounts)]
 pub struct WithdrawShim<'info> {
-    /// CHECK: validated in process_withdraw
-    #[account(mut)]
+    /// CHECK: validated in process_withdraw (owner + Pool discriminator).
+    /// Deliberately NOT `mut` (F-4): withdraw only reads pool fields and the root
+    /// history — the sole mutable data borrow in the instruction is the nullifier
+    /// account. Granting a write capability the instruction never uses would let a
+    /// later edit mutate pool state without that showing up in the account
+    /// declaration. Callers may still pass it writable; nothing breaks.
     pub pool: UncheckedAccount<'info>,
     /// CHECK: validated in process_withdraw
     #[account(mut)]
