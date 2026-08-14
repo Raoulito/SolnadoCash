@@ -1,0 +1,8 @@
+[fuzz.metrics]
+enabled = true
+
+
+[[fuzz.programs]]
+address = "DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59"
+program = "../target/deploy/solnadocash.so"
+ 

@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "fuzz_tests"
+version = "0.1.0"
+description = "Created with Trident"
+edition = "2021"
+
+[dependencies]
+borsh = "1.5.3"
+
+[dependencies.trident-fuzz]
+version = "0.12.0"
+# The program calls sol_poseidon in every instruction path (initialize_pool computes the
+# empty Merkle root, deposit hashes 20 levels, withdraw verifies a Groth16 proof). Without
+# the syscall stubs, trident-svm aborts on the first Poseidon call and nothing can be
+# fuzzed — initialize_pool panicked 496/496 before this was enabled.
+features = ["syscalls"]
+
+[[bin]]
+name = "fuzz_0"
+path = "fuzz_0/test_fuzz.rs"
