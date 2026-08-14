@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 45fb9a7ccd668b278a3c4b8606ababe619ab565ed78a16d7e164ba7faa170319 # shrinks to denomination = 2396670154344740337, fee_taken = 47933403086894807, fee_max = 47933403086894807
+cc c8af3915a189531fdbd8bb1fce04e58298faf58f5fa9eaa579179fcccb60e30c # shrinks to (denomination, fee_max, fee_taken) = (96947792940, 306870796, 79151)
+cc 9cdc956e216647b3674c96d2abbc91d15fb1409f228590979726021b94929ec2 # shrinks to bytes = [48, 100, 78, 114, 225, 49, 160, 41, 184, 80, 69, 182, 129, 129, 88, 93, 40, 51, 232, 72, 121, 185, 112, 145, 67, 225, 245, 147, 240, 0, 0, 1]
