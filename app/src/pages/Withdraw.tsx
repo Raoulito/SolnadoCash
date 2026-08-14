@@ -88,7 +88,15 @@ export default function Withdraw() {
   const { info: poolInfo } = usePoolInfo(parsedNote?.poolAddress ?? null);
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
-  const executeWithdraw = useCallback(async () => {
+  // F-3: a stale root is the expected outcome of root-ring griefing — an attacker making
+  // 256 deposits rotates every prior root out, invalidating any proof generated but not
+  // yet submitted. Making the user notice and click "retry" is what turns a cheap,
+  // repeatable nuisance into a denial of service. Retrying automatically against a fresh
+  // tree means the attacker has to sustain 256 deposits for every single attempt, which
+  // is no longer cheap.
+  const MAX_STALE_ROOT_RETRIES = 2;
+
+  const executeWithdraw = useCallback(async (attempt = 0) => {
     if (!parsedNote) return;
 
     setStep('progress');
@@ -175,9 +183,17 @@ export default function Withdraw() {
       } else if (msg.includes('InvalidProof')) {
         setProgressError('Proof verification failed. The Merkle tree may be out of sync — try again.');
       } else if (msg.includes('StaleRoot') || msg.includes('RootNotFound')) {
+        if (attempt < MAX_STALE_ROOT_RETRIES) {
+          // Rebuild from current state and prove again. No user action required.
+          setProgressError(null);
+          setProgressStep(0);
+          void executeWithdraw(attempt + 1);
+          return;
+        }
         setProgressError(
-          'The Merkle root is no longer in the pool\'s history. ' +
-          'New deposits may have rotated it out. Try again to use the latest state.'
+          'The Merkle root kept changing while your proof was being generated, after ' +
+          `${MAX_STALE_ROOT_RETRIES + 1} attempts. This can happen under heavy deposit ` +
+          'traffic. Your note is unspent and still valid — try again in a few minutes.'
         );
       } else if (msg.includes('InvalidWithdrawalCommitment')) {
         setProgressError('Withdrawal commitment mismatch. The relayer address or fee may have changed — try again.');
@@ -450,7 +466,7 @@ export default function Withdraw() {
         <PrivacyNotice sameSession={sameSession} />
 
         <button
-          onClick={executeWithdraw}
+          onClick={() => executeWithdraw(0)}
           className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
         >
           Withdraw
@@ -503,7 +519,7 @@ export default function Withdraw() {
             </div>
 
             <button
-              onClick={executeWithdraw}
+              onClick={() => executeWithdraw(0)}
               className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-xl transition-colors text-sm"
             >
               Retry withdrawal
