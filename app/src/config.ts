@@ -122,7 +122,7 @@ function loadPools(): PoolConfig[] {
       label: '1 SOL',
       denominationSol: 1,
       denominationLamports: 1_000_000_000n,
-      address: '6PW8Wj3wGLKniRSM9rJAVSsDfY3EJPMfzxXotrvdNx6E',
+      address: 'Dg7qsi5Xjsh3k6vTBrXTHnsL4iEq4eMUbEzYNMDWaexY',
     },
     {
       label: '10 SOL',
