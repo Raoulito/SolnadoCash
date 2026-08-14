@@ -71,8 +71,7 @@ async function scanDeposits(
 
   const allSignatures = [];
   let before: string | undefined;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  for (;;) {
     const batch = await connection.getSignaturesForAddress(
       poolAddress,
       { before, until, limit: 1000 },

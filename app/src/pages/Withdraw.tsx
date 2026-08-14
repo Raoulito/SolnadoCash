@@ -96,6 +96,8 @@ export default function Withdraw() {
   // is no longer cheap.
   const MAX_STALE_ROOT_RETRIES = 2;
 
+  const shownCeiling = breakdown?.relayerFeeMax ?? null;
+
   const executeWithdraw = useCallback(async (attempt = 0) => {
     if (!parsedNote) return;
 
@@ -125,8 +127,19 @@ export default function Withdraw() {
         validUntil: feeQuoteRaw.validUntil,
         estimatedUserReceives: BigInt(feeQuoteRaw.estimatedUserReceives),
       };
-      const shownMax = breakdown?.relayerFeeMax ?? quote.relayerFeeMax;
-      validateFeeQuote(note.denomination, quote, { maxRelayerFee: shownMax });
+      // FE-2: this comparison is the whole H-4 guarantee — the user must never be committed
+      // to a ceiling higher than the one they were shown. `breakdown` is the figure actually
+      // rendered on the confirm screen, and it was missing from this callback's dependency
+      // array, so the memoised closure still held `breakdown === null` and the fallback
+      // compared the fresh quote against itself, which can never fail. If the shown ceiling
+      // is somehow absent, refuse rather than fall back to a self-comparison.
+      if (shownCeiling === null) {
+        throw new Error(
+          'Internal error: no fee ceiling was recorded from the confirmation screen. ' +
+            'Go back and request a fresh quote.'
+        );
+      }
+      validateFeeQuote(note.denomination, quote, { maxRelayerFee: shownCeiling });
 
       // Step 1: Generate ZK proof (CPU-intensive, ~15-60s)
       setProgressStep(1);
@@ -219,7 +232,7 @@ export default function Withdraw() {
         setProgressError(msg);
       }
     }
-  }, [parsedNote, recipient, connection]);
+  }, [parsedNote, recipient, connection, shownCeiling]);
 
   // Step 1: Paste note
   if (step === 'paste') {
