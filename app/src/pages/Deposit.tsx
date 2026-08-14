@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { PublicKey } from '@solana/web3.js';
@@ -9,6 +9,7 @@ import NoteDisplay from '../components/NoteDisplay';
 import { usePoolInfo } from '../hooks/usePool';
 import { getProgram, buildDepositTx } from '../utils/program';
 import { markDepositedThisSession } from '../components/PrivacyNotice';
+import { stageNote, markNoteStatus, clearNote } from '../utils/noteVault';
 import { explorerTxUrl, type PoolConfig } from '../config';
 
 type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
@@ -28,6 +29,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   const [secretNote, setSecretNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [txSig, setTxSig] = useState<string | null>(null);
+  const [confirmUnknown, setConfirmUnknown] = useState(false);
 
   // T42: Pool saturation check
   const { info: poolInfo, loading: poolLoading } = usePoolInfo(pool?.address || null);
@@ -160,6 +162,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
       if (!pool || !pool.address || !publicKey || !anchorWallet) return;
       setStep('processing');
       setError(null);
+      setConfirmUnknown(false);
 
       try {
         // Initialize Poseidon hash (loads WASM, cached after first call)
@@ -176,19 +179,63 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           note.denomination
         );
 
+        // FE-1: persist the note BEFORE broadcasting. Once the transaction is in flight the
+        // deposit may land whatever happens next in this browser, and the note is the only
+        // way to ever withdraw it. If storage is unavailable, refuse to deposit rather than
+        // risk an unrecoverable deposit — a blocked deposit is recoverable, a lost note is
+        // not.
+        if (
+          !stageNote({
+            note: note.encoded,
+            poolAddress: pool.address,
+            denominationSol: pool.denominationSol,
+          })
+        ) {
+          setError(
+            'Cannot save your secret note to this browser\'s storage, so the deposit was ' +
+              'not sent. Without saved storage a network interruption could lose the note ' +
+              'and the funds with it. Disable private browsing or allow site storage, then ' +
+              'try again.'
+          );
+          setStep('confirm');
+          return;
+        }
+
+        // The note is safe from here on, so surface it immediately: every later failure
+        // path can show it rather than discard it.
+        setSecretNote(note.encoded);
+
         // Build the real Anchor deposit instruction
         const program = getProgram(connection, anchorWallet);
         const tx = await buildDepositTx(program, poolPda, publicKey, commitment);
 
         // Sign and send via wallet adapter
-        const sig = await sendTransaction(tx, connection);
-        await connection.confirmTransaction(sig, 'confirmed');
-
+        let sig: string;
+        try {
+          sig = await sendTransaction(tx, connection);
+        } catch (sendErr) {
+          // Nothing was broadcast (rejected in wallet, build failure), so the staged note
+          // corresponds to no deposit and would only confuse a recovery prompt later.
+          clearNote(note.encoded);
+          setSecretNote('');
+          throw sendErr;
+        }
+        markNoteStatus(note.encoded, 'sent', sig);
         setTxSig(sig);
-        setSecretNote(note.encoded);
+
         // Record the deposit so the withdraw flow can warn about same-session
         // correlation (H-6).
         markDepositedThisSession();
+
+        try {
+          await connection.confirmTransaction(sig, 'confirmed');
+          markNoteStatus(note.encoded, 'confirmed', sig);
+        } catch {
+          // The transaction was broadcast and may well have succeeded — confirmation
+          // timeouts are routine under congestion. Showing an error here and dropping the
+          // note was the original fund-loss bug. Show the note, and say what is unknown.
+          setConfirmUnknown(true);
+        }
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
@@ -278,9 +325,15 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
     return (
       <div className="space-y-4">
         <div className="text-center">
-          <span className="text-3xl mb-2 block">&#10003;</span>
-          <h2 className="text-lg font-semibold text-green-400 mb-1">
-            Deposit successful!
+          <span className="text-3xl mb-2 block">
+            {confirmUnknown ? '\u26A0' : '\u2713'}
+          </span>
+          <h2
+            className={`text-lg font-semibold mb-1 ${
+              confirmUnknown ? 'text-amber-400' : 'text-green-400'
+            }`}
+          >
+            {confirmUnknown ? 'Deposit sent — confirmation unknown' : 'Deposit successful!'}
           </h2>
           {txSig && (
             <a
@@ -294,9 +347,29 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           )}
         </div>
 
+        {confirmUnknown && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <p className="text-amber-400 text-sm font-medium mb-1">
+              We could not confirm the transaction
+            </p>
+            <p className="text-amber-400/70 text-xs leading-relaxed">
+              The deposit was broadcast but the network did not confirm it in time. It has
+              probably succeeded. Save the note below either way, then check the transaction
+              link: if it succeeded the note is your only way to withdraw, and if it failed
+              the note is simply unusable. Do not deposit again until you have checked, or
+              you may deposit twice.
+            </p>
+          </div>
+        )}
+
         <NoteDisplay
           note={secretNote}
-          onDone={() => setStep('next')}
+          onDone={() => {
+            // Only now is the note safe to drop from storage: the user has stated they
+            // have it somewhere else.
+            clearNote(secretNote);
+            setStep('next');
+          }}
         />
       </div>
     );

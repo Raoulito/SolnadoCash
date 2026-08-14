@@ -5,6 +5,7 @@ import Onboarding from './pages/Onboarding';
 import Deposit from './pages/Deposit';
 import Withdraw from './pages/Withdraw';
 import NetworkGuard from './components/NetworkGuard';
+import NoteRecovery from './components/NoteRecovery';
 
 type Tab = 'deposit' | 'withdraw';
 
@@ -95,6 +96,10 @@ export default function App() {
               </button>
             ))}
           </div>
+
+          {/* FE-1: a note stranded by an interrupted session is the only key to a deposit
+              that may have landed, so it is surfaced above everything else. */}
+          <NoteRecovery />
 
           {/* Lock banner */}
           {noteLocked && (
