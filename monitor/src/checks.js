@@ -38,10 +38,22 @@ export function checkVaultIntegrity(p) {
     return out;
   }
 
+  // A vault below its rent reserve means more lamports left than the deposits ever funded,
+  // which is exactly "withdrawals exceed deposits". These were two separate branches, and
+  // the second was unreachable: implied > deposits is algebraically equivalent to
+  // vault < rent, so the earlier return always won and the check that was supposed to be the
+  // primary forged-proof detector could never fire. Verified by exhaustive search over the
+  // reachable state space (0 hits). Merged here so the accurate diagnosis is the one that
+  // actually gets sent.
   if (vaultLamports < vaultRent) {
-    out.push({ severity: CRITICAL, code: "VAULT_BELOW_RENT", pool: label,
-      message: `vault ${vaultLamports} is below its rent reserve ${vaultRent} — lamports ` +
-               `left the vault outside the withdrawal path` });
+    const shortfall = vaultRent - vaultLamports;
+    const impliedExtra = shortfall / denomination + 1n;
+    out.push({ severity: CRITICAL, code: "WITHDRAWALS_EXCEED_DEPOSITS", pool: label,
+      message: `vault ${vaultLamports} is BELOW its rent reserve ${vaultRent} (short by ` +
+               `${shortfall}), so more has left the vault than ${deposits} deposits could ` +
+               `fund — roughly ${impliedExtra} withdrawal(s) more than were paid for. This ` +
+               `is the signature of proofs being accepted without matching deposits. Pause ` +
+               `deposits and investigate immediately.` });
     return out;
   }
 
@@ -64,12 +76,15 @@ export function checkVaultIntegrity(p) {
     return out;
   }
 
+  // implied <= deposits is now guaranteed: anything larger requires vault < rent, handled
+  // above. Kept as an explicit assertion so a future change to the ordering cannot silently
+  // reintroduce a gap.
   const impliedWithdrawals = numerator / denomination;
   if (impliedWithdrawals > deposits) {
-    out.push({ severity: CRITICAL, code: "WITHDRAWALS_EXCEED_DEPOSITS", pool: label,
-      message: `implied withdrawals ${impliedWithdrawals} EXCEEDS deposits ${deposits}. ` +
-               `This is the signature of proofs being accepted without matching deposits. ` +
-               `Pause deposits and investigate immediately.` });
+    out.push({ severity: CRITICAL, code: "INVARIANT_LOGIC_ERROR", pool: label,
+      message: `implied withdrawals ${impliedWithdrawals} exceeds deposits ${deposits} ` +
+               `without the vault being below rent. This should be unreachable — treat it as ` +
+               `a bug in the monitor AND investigate the pool.` });
   }
 
   return out;

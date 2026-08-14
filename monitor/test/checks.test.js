@@ -30,28 +30,27 @@ describe("vault integrity", () => {
     }
   });
 
-  it("fires CRITICAL when implied withdrawals exceed deposits (forged-proof signature)", () => {
-    // The vault is short by more than the deposits can explain.
-    const s = healthy(5n, 5n);
-    s.vaultLamports = RENT - 0n - DENOM * 0n; // exactly rent, but claim only 3 deposits
-    s.deposits = 3n;
-    // rent + 3*denom - rent = 3*denom -> implied 3, equal to deposits: still fine.
-    // Make it worse: vault below what 3 deposits could ever leave.
-    s.deposits = 2n;
-    s.vaultLamports = RENT; // implied withdrawals = 2 == deposits -> fine
-    s.deposits = 1n;        // now implied 1 == deposits -> fine
-    // The real violation: vault lower than rent is caught separately, so construct a
-    // surplus-free case where numerator/denom > deposits by inflating denom accounting.
-    const bad = { label: "1 SOL", denomination: DENOM, deposits: 2n,
-      vaultRent: RENT, vaultLamports: RENT };
-    // rent + 2*denom - rent = 2*denom -> implied 2, == deposits. Still legal.
-    // A drain beyond deposits necessarily pushes the vault below rent, which is the
-    // other CRITICAL. Assert that instead, since it is the reachable form.
-    const drained = { ...bad, vaultLamports: RENT - 1n };
-    const f = checkVaultIntegrity(drained);
+  it("fires CRITICAL when more has left than deposits could fund (forged-proof signature)", () => {
+    // The reachable form of "withdrawals exceed deposits": draining beyond what deposits
+    // funded necessarily takes the vault below its rent reserve.
+    const f = checkVaultIntegrity({
+      label: "1 SOL", denomination: DENOM, deposits: 2n,
+      vaultRent: RENT, vaultLamports: RENT - DENOM,
+    });
     assert.equal(f.length, 1);
     assert.equal(f[0].severity, CRITICAL);
-    assert.equal(f[0].code, "VAULT_BELOW_RENT");
+    assert.equal(f[0].code, "WITHDRAWALS_EXCEED_DEPOSITS");
+    assert.match(f[0].message, /signature of proofs being accepted/);
+    assert.match(f[0].message, /BELOW its rent reserve/);
+  });
+
+  it("still fires when the vault is short by a single lamport", () => {
+    const f = checkVaultIntegrity({
+      label: "1 SOL", denomination: DENOM, deposits: 3n,
+      vaultRent: RENT, vaultLamports: RENT - 1n,
+    });
+    assert.equal(f[0].code, "WITHDRAWALS_EXCEED_DEPOSITS");
+    assert.equal(f[0].severity, CRITICAL);
   });
 
   it("fires CRITICAL on a non-whole-denomination discrepancy", () => {
@@ -74,11 +73,11 @@ describe("vault integrity", () => {
     assert.equal(f[0].severity, WARNING);
   });
 
-  it("fires CRITICAL when the vault dips below its rent reserve", () => {
+  it("treats a below-rent vault as the same finding, not a separate one", () => {
     const s = healthy(3n, 3n);
     s.vaultLamports = RENT - 1n;
     const f = checkVaultIntegrity(s);
-    assert.equal(f[0].code, "VAULT_BELOW_RENT");
+    assert.equal(f[0].code, "WITHDRAWALS_EXCEED_DEPOSITS");
     assert.equal(f[0].severity, CRITICAL);
   });
 
