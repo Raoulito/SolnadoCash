@@ -87,7 +87,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
               <span className="text-zinc-200">{pool.denominationSol} SOL</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-zinc-400">Privacy fee (0.2%)</span>
+              <span className="text-zinc-400">Privacy fee (0.2%, on withdrawal)</span>
               <span className="text-zinc-200">
                 {pool.denominationSol / 500} SOL
               </span>
@@ -272,17 +272,25 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <div className="bg-zinc-800/50 rounded-xl p-5 space-y-3">
           <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">You deposit</span>
+            <span className="text-zinc-400">Leaves your wallet now</span>
             <span className="text-zinc-100 font-semibold">{pool!.denominationSol} SOL</span>
           </div>
+          {/* FE-6: the fee is deducted from the withdrawal, not added to the deposit. Listing
+              it beside "You deposit" read as though the wallet was paying 1.002 SOL today. */}
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Privacy fee (0.2%)</span>
-            <span className="text-zinc-300">{pool!.denominationSol / 500} SOL</span>
+            <span className="text-zinc-300">
+              {pool!.denominationSol / 500} SOL, later
+            </span>
           </div>
           <div className="border-t border-zinc-700 pt-3 flex justify-between text-sm">
             <span className="text-zinc-400">You will receive</span>
             <span className="text-zinc-100 font-semibold">a secret note</span>
           </div>
+          <p className="text-zinc-500 text-xs leading-relaxed">
+            Exactly {pool!.denominationSol} SOL leaves your wallet now. The 0.2% fee and the
+            relayer fee are taken out of the amount you withdraw later, not charged today.
+          </p>
         </div>
 
         <div className="bg-zinc-800/30 rounded-xl p-4">
