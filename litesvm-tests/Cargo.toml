@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "litesvm-tests"
+version = "0.1.0"
+edition = "2021"
+description = "Does LiteSVM run the Poseidon and BN254 syscalls this program depends on?"
+
+[dependencies]
+litesvm = "0.6"
+solana-sdk = "2"
+
+[dev-dependencies]
+proptest = "1.5"
