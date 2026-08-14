@@ -17,6 +17,9 @@ pub mod admin;
 #[cfg(test)]
 mod proptests;
 
+#[cfg(test)]
+mod merkle_tests;
+
 use crate::state::{Pool, VaultAccount, POOL_SIZE};
 use crate::withdraw::WithdrawArgs;
 pub use crate::events::*;
