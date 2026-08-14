@@ -10,14 +10,23 @@
 // A staged note whose deposit never actually landed is harmless — it simply cannot be
 // withdrawn — so the wording never asserts that funds exist, it tells the user how to check.
 
-import { useState } from 'react';
-import { clearNote, pendingNotes, type PendingNote } from '../utils/noteVault';
+import { useEffect, useState } from 'react';
+import {
+  clearNote,
+  onPendingNotesChanged,
+  pendingNotes,
+  type PendingNote,
+} from '../utils/noteVault';
 import { explorerTxUrl } from '../config';
 
 export default function NoteRecovery() {
   const [notes, setNotes] = useState<PendingNote[]>(() => pendingNotes());
   const [copied, setCopied] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
+
+  // Track storage rather than a mount-time snapshot: a note stranded mid-session must appear
+  // without a reload, because the deposit error message tells the user to look here.
+  useEffect(() => onPendingNotesChanged(() => setNotes(pendingNotes())), []);
 
   if (notes.length === 0) return null;
 

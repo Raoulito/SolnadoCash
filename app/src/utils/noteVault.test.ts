@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import {
   stageNote, markNoteStatus, clearNote, pendingNotes, hasPendingNotes,
+  onPendingNotesChanged,
 } from './noteVault';
 
 const NOTE = 'sndo_pool_1000000000_abcdef0123456789';
@@ -97,5 +98,22 @@ describe('noteVault', () => {
     const got = pendingNotes();
     expect(got).toHaveLength(1);
     expect(got[0].note).toBe(NOTE);
+  });
+
+  it('notifies subscribers so the recovery banner is not a mount-time snapshot', () => {
+    const seen: number[] = [];
+    const unsubscribe = onPendingNotesChanged(() => seen.push(pendingNotes().length));
+
+    stageNote({ note: NOTE, poolAddress: 'pool', denominationSol: 1 });
+    markNoteStatus(NOTE, 'sent', 'sig');
+    clearNote(NOTE);
+
+    // A note stranded mid-session must become visible without a reload, since the deposit
+    // error message points the user at the banner.
+    expect(seen).toEqual([1, 1, 0]);
+    unsubscribe();
+
+    stageNote({ note: NOTE2, poolAddress: 'p2', denominationSol: 0.1 });
+    expect(seen).toHaveLength(3); // no longer notified after unsubscribe
   });
 });

@@ -14,6 +14,21 @@ import { explorerTxUrl, type PoolConfig } from '../config';
 
 type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
+/**
+ * Did the wallet definitively refuse to sign?
+ *
+ * Only this case proves no transaction reached the network. Everything else must be treated
+ * as "may have been broadcast", because sendTransaction submits as well as signs.
+ */
+export function isWalletRejection(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  const code = (err as { code?: unknown } | null)?.code;
+  return (
+    code === 4001 ||
+    /user rejected|rejected the request|user denied|request rejected/i.test(msg)
+  );
+}
+
 interface DepositProps {
   onGoToWithdraw: () => void;
   onNoteLock: (locked: boolean) => void;
@@ -179,6 +194,12 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           note.denomination
         );
 
+        // Build the transaction BEFORE staging the note, so a build failure (an RPC hiccup
+        // fetching a blockhash, say) cannot leave a staged note behind for a deposit that
+        // was never attempted.
+        const program = getProgram(connection, anchorWallet);
+        const tx = await buildDepositTx(program, poolPda, publicKey, commitment);
+
         // FE-1: persist the note BEFORE broadcasting. Once the transaction is in flight the
         // deposit may land whatever happens next in this browser, and the note is the only
         // way to ever withdraw it. If storage is unavailable, refuse to deposit rather than
@@ -205,19 +226,21 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         // path can show it rather than discard it.
         setSecretNote(note.encoded);
 
-        // Build the real Anchor deposit instruction
-        const program = getProgram(connection, anchorWallet);
-        const tx = await buildDepositTx(program, poolPda, publicKey, commitment);
-
-        // Sign and send via wallet adapter
+        // Sign and send via wallet adapter.
         let sig: string;
         try {
           sig = await sendTransaction(tx, connection);
         } catch (sendErr) {
-          // Nothing was broadcast (rejected in wallet, build failure), so the staged note
-          // corresponds to no deposit and would only confuse a recovery prompt later.
-          clearNote(note.encoded);
-          setSecretNote('');
+          // FE-11: only a definite wallet rejection proves nothing reached the network.
+          // sendTransaction both signs AND submits, so any other failure — a send-RPC
+          // timeout, a dropped response — may still have broadcast a transaction that
+          // lands. Discarding the note in that case would recreate the fund-loss bug this
+          // whole mechanism exists to prevent, so the note is kept and the recovery banner
+          // will offer it on the next load.
+          if (isWalletRejection(sendErr)) {
+            clearNote(note.encoded);
+            setSecretNote('');
+          }
           throw sendErr;
         }
         markNoteStatus(note.encoded, 'sent', sig);
@@ -239,7 +262,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
-        if (msg.includes('User rejected')) {
+        if (isWalletRejection(err)) {
           setError('Transaction cancelled.');
         } else if (msg.includes('insufficient') || msg.includes('not enough')) {
           setError('Not enough SOL in your wallet.');
@@ -248,7 +271,13 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         } else if (msg.includes('PoolSaturated') || msg.includes('TreeFull')) {
           setError('This pool is full. Try a different denomination.');
         } else {
-          setError(msg);
+          // The note is still in storage at this point and may correspond to a deposit that
+          // landed, so do not imply the attempt simply failed.
+          setError(
+            `${msg}\n\nYour secret note has been saved in this browser in case the ` +
+              `deposit went through. Check the pool before depositing again — see the ` +
+              `unsaved-notes banner.`
+          );
         }
         setStep('confirm');
       }

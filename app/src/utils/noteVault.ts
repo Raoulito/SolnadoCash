@@ -24,6 +24,38 @@
 
 const KEY = 'solnadocash_pending_notes_v1';
 
+/**
+ * Notified whenever the set of pending notes changes, so the recovery banner reflects
+ * storage instead of a snapshot taken at mount. Without this, a note stranded during the
+ * current session stays invisible until a reload — and the deposit error message points the
+ * user at that banner, so it has to be there.
+ */
+const CHANGE_EVENT = 'solnadocash:pending-notes-changed';
+
+function notifyChanged(): void {
+  try {
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  } catch {
+    // Non-browser context (tests, SSR): nothing is listening.
+  }
+}
+
+/** Subscribe to changes. Returns an unsubscribe function. */
+export function onPendingNotesChanged(handler: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener(CHANGE_EVENT, handler);
+  // 'storage' fires for changes made in OTHER tabs, which matters if the user has the app
+  // open twice.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === null || e.key === KEY) handler();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener(CHANGE_EVENT, handler);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
 export interface PendingNote {
   /** The encoded sndo_ note. */
   note: string;
@@ -55,6 +87,7 @@ function readAll(): PendingNote[] {
 function writeAll(notes: PendingNote[]): boolean {
   try {
     localStorage.setItem(KEY, JSON.stringify(notes));
+    notifyChanged();
     return true;
   } catch {
     return false;
