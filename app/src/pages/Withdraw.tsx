@@ -85,7 +85,9 @@ export default function Withdraw() {
   const sameSession = depositedThisSession();
 
   // M-1: surface the real anonymity set for the pool this note belongs to.
-  const { info: poolInfo } = usePoolInfo(parsedNote?.poolAddress ?? null);
+  const { info: poolInfo, error: poolError } = usePoolInfo(
+    parsedNote?.poolAddress ?? null
+  );
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   // F-3: a stale root is the expected outcome of root-ring griefing — an attacker making
@@ -471,6 +473,15 @@ export default function Withdraw() {
             The ZK proof is computed in your browser — your secret note never leaves this device.
           </p>
         </div>
+
+        {poolError && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+            <p className="text-red-400 text-sm font-medium mb-1">
+              Could not verify this pool
+            </p>
+            <p className="text-red-400/70 text-xs leading-relaxed">{poolError}</p>
+          </div>
+        )}
 
         {poolInfo && (
           <AnonymitySet depositCount={poolInfo.nextIndex} context="withdraw" />
