@@ -1,0 +1,50 @@
+[Unit]
+# SolnadoCash on-chain watcher.
+#
+# Install:
+#   sudo cp solnadocash-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now solnadocash-monitor
+#   journalctl -u solnadocash-monitor -f
+#
+# Adjust User= and WorkingDirectory= to match your VM.
+Description=SolnadoCash on-chain monitor (vault integrity, authority drift, relayer solvency)
+Documentation=https://github.com/Raoulito/SolnadoCash
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/SolnadoCash/monitor
+EnvironmentFile=/home/ubuntu/SolnadoCash/monitor/.env
+ExecStart=/usr/bin/node src/index.js
+
+# Always come back up. A monitor that dies silently is worse than no monitor, because you
+# believe you are covered. The watcher also catches its own transient RPC errors, so a
+# restart here means something more serious.
+Restart=always
+RestartSec=30
+
+# The process only makes outbound RPC calls and writes one state file, so it needs almost
+# no privilege. Least privilege matters here because this box may also run the relayer,
+# which holds a hot key.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/SolnadoCash/monitor
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=solnadocash-monitor
+
+[Install]
+WantedBy=multi-user.target

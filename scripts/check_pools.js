@@ -152,10 +152,22 @@ async function main() {
         `${treasuryOk ? "treasury OK" : "TREASURY MISMATCH -> " + treasury.toBase58()}`
     );
 
-    if (!admin.equals(expectedTreasury)) {
+    // Assert the admin, not just report it. EXPECTED_ADMIN is separate from
+    // EXPECTED_TREASURY because splitting those roles is the recommended pre-mainnet
+    // posture; if it is unset we fall back to expecting them equal and say so.
+    const expectedAdminStr = process.env.EXPECTED_ADMIN || expectedTreasury.toBase58();
+    if (admin.toBase58() !== expectedAdminStr) {
+      problems.push(
+        `${label}: admin is ${admin.toBase58()}, expected ${expectedAdminStr}. ` +
+          `An unexpected admin can pause deposits on this pool.`
+      );
       console.log(
-        `        note: admin is ${admin.toBase58()} (not the expected treasury key — ` +
-          `fine if you deliberately split the roles, which is recommended before mainnet)`
+        `        FAIL  admin is ${admin.toBase58()}, expected ${expectedAdminStr}`
+      );
+    } else if (!process.env.EXPECTED_ADMIN) {
+      console.log(
+        `        note: admin == treasury. Set EXPECTED_ADMIN to assert a split-role ` +
+          `deployment (recommended before mainnet).`
       );
     }
   }

@@ -57,3 +57,5 @@ temp/
 scripts/verify_devnet.*
 .devnet_verify_leaves.json
 litesvm-tests/target/
+monitor/state.json
+monitor/node_modules/
