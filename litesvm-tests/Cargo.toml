@@ -9,6 +9,7 @@ description = "Does LiteSVM run the Poseidon and BN254 syscalls this program dep
 [dependencies]
 litesvm = "0.6"
 solana-sdk = "2"
+serde_json = "1"
 
 [dev-dependencies]
 proptest = "1.5"
