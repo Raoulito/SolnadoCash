@@ -453,6 +453,19 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
     );
   });
 
+
+  // snarkjs/ffjavascript caches a bn128 curve with a WORKER THREAD POOL in
+  // globalThis.curve_bn128 and never tears it down. Those workers keep the Node event
+  // loop alive, so mocha finishes the run and then hangs forever at exit. That is what
+  // the "28-minute hang" on seed 8675309 actually was: the test had already PASSED in
+  // 23 seconds and the process simply refused to exit. Terminating the pool fixes it.
+  after(async () => {
+    const g = globalThis as unknown as { curve_bn128?: { terminate?: () => Promise<void> } };
+    if (g.curve_bn128?.terminate) {
+      await g.curve_bn128.terminate();
+    }
+  });
+
   // ── Happy path ────────────────────────────────────────────────────────────────
   describe("withdraw — happy path", () => {
     it("executes valid withdrawal, recipient receives SOL", async () => {

@@ -72,6 +72,32 @@ const OFF_BUMP = 8 + 121;
 const OFF_VAULT_BUMP = 8 + 122;
 const OFF_IS_PAUSED = 8 + 123;
 
+/**
+ * Fail loudly instead of hanging.
+ *
+ * Seed 8675309 stalled for ~28 minutes on an earlier run and was killed without a
+ * diagnosis. "It hung" is not a finding, so every operation is now wrapped: if one does
+ * not settle within OP_TIMEOUT_MS the test rejects naming the operation, which turns an
+ * indefinite stall into a located failure. Note a Solana program cannot itself loop
+ * forever — the compute budget terminates it — so any stall is in the harness or the RPC
+ * round-trip.
+ */
+const OP_TIMEOUT_MS = Number(process.env.SEQ_FUZZ_OP_TIMEOUT || 60_000);
+async function withTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`OPERATION STALLED (>${OP_TIMEOUT_MS}ms): ${label}`)),
+      OP_TIMEOUT_MS
+    );
+  });
+  try {
+    return await Promise.race([p, guard]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 /** Seeded xorshift32 so any failure is reproducible from its seed. */
 function makeRng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -221,7 +247,7 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
   async function buildProof(note: { n: bigint; s: bigint; leaf: number }, recipient: PublicKey) {
     const { els, idxs, root } = tree.proof(note.leaf);
     const wc = ph(pkToField(relayer.publicKey), RELAYER_FEE, pkToField(recipient));
-    const res = await snarkjs.groth16.fullProve(
+    const res = await withTimeout("snarkjs.groth16.fullProve", snarkjs.groth16.fullProve(
       {
         nullifierHash: ph(note.n).toString(),
         root: root.toString(),
@@ -237,7 +263,7 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
       },
       WITHDRAW_WASM,
       WITHDRAW_ZKEY
-    );
+    ));
     const pb = proofToBytes(res.proof);
     return {
       proofA: Array.from(pb.a),
@@ -259,8 +285,12 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
     treasury = Keypair.generate();
     relayer = Keypair.generate();
     for (const [kp, sol] of [[admin, 200], [relayer, 20]] as [Keypair, number][]) {
-      const sig = await provider.connection.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL);
-      await provider.connection.confirmTransaction(sig);
+      const sig = await withTimeout(
+        `requestAirdrop(${sol} SOL)`,
+        provider.connection.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL)
+      );
+      await withTimeout(`confirmTransaction(airdrop ${sol} SOL)`,
+        provider.connection.confirmTransaction(sig));
     }
 
     const denomBN = new BN(DENOMINATION.toString());
@@ -299,6 +329,19 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
     await checkInvariants("init");
   });
 
+
+  // snarkjs/ffjavascript caches a bn128 curve with a WORKER THREAD POOL in
+  // globalThis.curve_bn128 and never tears it down. Those workers keep the Node event
+  // loop alive, so mocha finishes the run and then hangs forever at exit. That is what
+  // the "28-minute hang" on seed 8675309 actually was: the test had already PASSED in
+  // 23 seconds and the process simply refused to exit. Terminating the pool fixes it.
+  after(async () => {
+    const g = globalThis as unknown as { curve_bn128?: { terminate?: () => Promise<void> } };
+    if (g.curve_bn128?.terminate) {
+      await g.curve_bn128.terminate();
+    }
+  });
+
   it("holds every invariant across a random operation sequence", async () => {
     for (let step = 0; step < STEPS; step++) {
       // Weights matter. A first pass used pause=12%/unpause=10% and the pool spent most
@@ -321,6 +364,10 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
       else op = "pause";
 
       opCounts[op] = (opCounts[op] || 0) + 1;
+      if (process.env.SEQ_FUZZ_TRACE) {
+        process.stdout.write(`    step ${step}: ${op} (live=${liveNotes.length} spent=${spentNotes.length} paused=${paused})\n`);
+      }
+      const stepStarted = Date.now();
 
       if (op === "deposit") {
         const real = rng() < 0.6;
@@ -445,7 +492,10 @@ describe("Sequence fuzzing (random operation orders, invariant-checked)", functi
         paused = false;
       }
 
-      await checkInvariants(`step ${step} (${op})`);
+      await withTimeout(`checkInvariants after ${op}`, checkInvariants(`step ${step} (${op})`));
+      if (process.env.SEQ_FUZZ_TRACE) {
+        process.stdout.write(`      done in ${Date.now() - stepStarted}ms\n`);
+      }
     }
 
     console.log(
