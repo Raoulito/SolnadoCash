@@ -8,7 +8,7 @@ Built on Groth16 zero-knowledge proofs (BN254), Poseidon hashing, and stealth ad
 
 ## How It Works
 
-1. **Deposit** — User sends a fixed amount (1 SOL) into a shared pool and receives a secret note
+1. **Deposit** — User sends one of the fixed denominations (0.1, 1 or 10 SOL) into a shared pool and receives a secret note
 2. **Wait** — The deposit sits in a pool alongside all other deposits of the same denomination
 3. **Withdraw** — User (or a relayer on their behalf) submits a ZK proof that they know a valid note, without revealing *which* deposit it corresponds to
 4. **Receive** — Funds arrive at any destination address with zero on-chain link to the original depositor
@@ -54,6 +54,21 @@ A second withdrawal with the same nullifier is rejected at the Solana runtime le
 **Relayer fee cap** — `relayer_fee_max <= denomination / 50` (2%) is enforced on-chain, and `user_amount > 0` is required. The user always keeps at least 97.8%.
 
 **Canonical public inputs** — All three ZK public inputs must be canonical BN254 field elements (`< Fr`). BN254 scalar multiplication reduces mod the group order and the syscall does not range-check the scalar, so `x` and `x + k*Fr` verify identically; because `nullifier_hash` is also a PDA seed, accepting a non-canonical value would allow the same note to be withdrawn 5-6 times.
+
+**Payout targets cannot alias the nullifier PDA** — no recipient, treasury or relayer may be
+the nullifier account the instruction is about to create. Crediting it burns the funds: the
+account ends up program-owned and no instruction can move lamports out of it, by design,
+because that account *is* the double-spend guard. The case reachable by a third party was a
+pool created with `treasury` set to the PDA a chosen nullifier hash will later occupy — it is
+system-owned and empty at creation, so the `SystemAccount` constraint accepts it — which would
+burn the protocol fee on every withdrawal of that note.
+
+**Denomination floor** — `initialize_pool` rejects any denomination whose worst-case payout
+(`denomination - denomination/500 - denomination/50`) falls below `Rent::minimum_balance(0)`,
+read from the live rent sysvar. Privacy requires withdrawing to a *fresh* address, and the
+runtime refuses to leave a new account below rent-exemption, so a pool under roughly 910,900
+lamports would accept deposits and then be unable to pay them out. Measured boundary: 890,879
+lamports rejected, 890,880 accepted.
 
 **Pool isolation** — Pool PDA seeds include the admin key and a version byte, preventing treasury hijacking and ensuring V1/V2 pools have distinct addresses:
 ```
@@ -161,13 +176,19 @@ circuits/       Circom ZK circuits (Groth16, Poseidon, Merkle tree)
 programs/       Anchor smart contract (Rust) — withdraw.rs is bare-metal
 relayer/        Node.js relayer service (fee quoting, tx submission)
 sdk/            TypeScript SDK (note generation, proof, stealth addresses, fees)
-app/            React + Tailwind frontend (Phase 5)
-scripts/        Trusted setup, CU benchmarks, devnet verification
+app/            React + Tailwind frontend
+monitor/        On-chain watcher (integrity invariant, authority drift, alerting)
+litesvm-tests/  Fast in-process on-chain tests (sequence fuzzer, invariants)
+scripts/        Trusted setup, CU benchmarks, devnet verification, pool deployment
 ```
 
 ### Circuits (Circom)
 - `withdraw.circom` — Proves knowledge of a valid deposit without revealing which one. 12,065 constraints.
-- `deposit.circom` — Verifies commitment structure. 605 constraints.
+- `deposit.circom` — Verifies commitment structure. 605 constraints. **Not used on-chain:**
+  `deposit` verifies no proof and accepts any 32-byte commitment, exactly as Tornado Cash does,
+  so this circuit is only an off-chain aid for checking that a commitment was formed correctly.
+  It costs nothing, because spending a note still requires a Merkle proof for a leaf in *this*
+  pool's tree, and inserting that leaf cost exactly one denomination.
 - `merkle_proof.circom` — 20-level Poseidon Merkle inclusion proof.
 
 ### Smart Contract (Anchor + bare-metal Rust)
@@ -180,6 +201,34 @@ scripts/        Trusted setup, CU benchmarks, devnet verification
 - `GET /fee_quote?pool=<address>` — Dynamic fee based on current network conditions
 - `POST /submit_proof` — Validates proof off-chain, then submits atomic on-chain transaction
 - `GET /health` — Balance monitoring, alerts below 5 SOL
+
+### Monitoring (Node.js)
+
+A standalone watcher, because detection is worth more here than privilege. Total outflow is
+already capped at total deposits by the vault-balance guard, so loss is bounded whether or not
+anyone is watching; the value of monitoring is learning about a problem *before* it is
+exploited, so deposits can be paused and users told to exit.
+
+The core check needs two account reads per pool. Since
+`vault == rent + (deposits - withdrawals) * denomination`, the quantity
+`rent + deposits*denom - vault` must be exactly divisible by the denomination, and the implied
+withdrawal count must lie in `[0, deposits]`. Withdrawals never increment `next_index`, so
+proofs accepted without matching deposits break one or both conditions. A vault below its rent
+reserve means more has left than the deposits funded — the forged-proof signature.
+
+Anyone can send lamports to a vault with a plain transfer, so a positive remainder is reported
+as "investigate", not as a confirmed breach. A monitor that cries wolf gets muted.
+
+Also watched: upgrade-authority drift (set `EXPECTED_UPGRADE_AUTHORITY` or a key takeover is
+invisible), drift in immutable pool fields against a baseline recorded on first run, outflow
+rate, saturation, relayer solvency, and pause transitions. Telegram alerting is optional;
+`--once` exits non-zero on a CRITICAL for cron use, and a hardened systemd unit is included.
+
+```bash
+cd monitor && npm install --omit=dev
+cp .env.example .env    # set POOLS and EXPECTED_UPGRADE_AUTHORITY
+npm run once            # single pass; or `npm start` to poll
+```
 
 ### SDK (TypeScript)
 ```typescript
@@ -244,6 +293,15 @@ cd relayer && npm test
 # SDK
 cd sdk && npm test
 
+# Frontend (vitest + eslint)
+cd app && npm test && npm run lint
+
+# Monitor
+cd monitor && npm test
+
+# Fast in-process on-chain tests, including the sequence fuzzer
+cd litesvm-tests && cargo test --release
+
 # Live devnet test (deposit + withdraw with real SOL)
 ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
 ANCHOR_WALLET=~/.config/solana/id.json \
@@ -262,14 +320,88 @@ Program deployed at: [`DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59`](https://so
 | 2. Anchor Program | Done | On-chain logic, CU benchmarks, devnet deployment |
 | 3. Relayer | Done | Fee quoting, proof validation, atomic tx submission |
 | 4. TypeScript SDK | Done | Note generation, proof, stealth addresses, fees, e2e tests |
-| 5. React Frontend | Next | Deposit/withdraw UI with wallet adapter |
-| 6. Testnet + Launch | Planned | Public testnet, bug bounty, mainnet |
+| 5. React Frontend | Done | Deposit/withdraw UI, wallet adapter, durable note storage |
+| 6. Monitoring | Done | Integrity invariant, authority drift, Telegram alerting |
+| 7. Testnet + Launch | Planned | Public testnet, bug bounty, external audit, mainnet |
+
+## Known Limitations
+
+Read this before deciding to trust anything here with money.
+
+**The trusted setup is single-party.** The Groth16 proving key came from a ceremony with one
+human contribution and a beacon generated from local randomness — verifiable from the artifact
+itself with `snarkjs zkey verify`, which lists `contribution #1` and an unattributable beacon.
+Whoever held that toxic waste can forge withdrawal proofs and drain every pool. Nothing else in
+this document matters more than this sentence. A multi-party ceremony is a prerequisite for
+mainnet.
+
+**The program is upgradeable and the keys are not separated.** See *Admin Powers* above: the
+upgrade authority, the pool admin and the treasury are the same key today, and that key can
+deploy code that moves every vault. Treat the protocol as custodial until it is `--final` or
+behind a timelocked multisig.
+
+**Loss is bounded, at least.** `withdraw` requires `vault.lamports() >= denomination`, so total
+outflow can never exceed total deposits even if proof verification were broken outright — a
+soundness failure drains a pool, not the chain. Proven in
+`litesvm-tests/tests/outflow_cap.rs`, which also shows a fully drained vault retains only its
+rent reserve.
+
+**Merkle reconstruction does not scale.** Withdrawing rebuilds the tree from deposit logs, one
+`getTransaction` per deposit, with no indexer. Known leaves are cached locally so a returning
+user pays only for new deposits, and the rebuilt tree is verified against the on-chain root
+before proving, so it fails loudly rather than producing an unprovable note — but a first-time
+user with a cold cache still pays O(deposits), and public RPC endpoints rate-limit and prune
+history. An indexer is required before a pool holds many thousands of deposits.
+
+**Duplicate commitments are accepted on-chain.** Detection is client-side only. Preventing it
+would need a per-commitment PDA, adding a rent-exempt account to every deposit forever, and
+copying someone else's commitment only burns the copier's own SOL — they still lack the secret,
+so only the original owner can withdraw, once. The cost is not proportionate to the harm.
+
+**Root-ring griefing is possible.** 256 deposits rotate every earlier root out of the ring, so
+a proof generated but not yet submitted fails closed. The note stays unspent and the app
+rebuilds and reproves automatically, so this is a nuisance rather than a denial of service, but
+it is not eliminated. Widening the ring would push the pool account past the 10,240-byte limit
+for single-instruction creation.
+
+**Stealth addresses are not usable end to end.** See the section above — there is no
+announcement channel for the ephemeral key.
 
 ## Audit Status
 
-This protocol has **not been audited by an external firm**. The ZK circuits, smart contract, and SDK have been developed with systematic security review at every step, but no formal audit report exists. Use at your own risk on mainnet.
+**Not audited by an external firm.** No formal audit report exists. What exists instead is
+several rounds of adversarial self-review, and their results are the reason to stay skeptical
+rather than reassured:
+
+| Round | Outcome |
+|-------|---------|
+| Manual review | 3 Critical, 6 High, 20 Medium/Low — all fixed except the two Criticals above |
+| Adversarial second pass | 3 High, **two of them regressions introduced by the first round's own fixes** |
+| Third pass | 1 real fix, plus accepted/informational findings |
+| Front-end pass | 10 findings, including one that could permanently lose a deposit |
+| Re-review | 2 findings, **both in code written hours earlier** |
+| Focused circuit/Merkle review | No code bugs; one test-coverage hole that hid silent breakage |
+
+Every round found something new, including rounds that examined freshly written code, and
+several fixes introduced fresh defects. The find rate has never reached zero, which is the best
+available evidence that more bugs remain. Treat "no known bugs" as the claim being made here —
+not "no bugs".
+
+What the tests do and do not establish. Verified: 42 Rust unit and property tests (including a
+differential test of the incremental Merkle insert against an independent recomputation, and a
+cross-language root vector pinned against the SDK), 10 in-process on-chain tests including a
+sequence fuzzer that has run 24,000+ steps against 7 invariants and 12 attack moves, 39/39
+live devnet checks, plus SDK, relayer, app and monitor suites. `circomspect` reports no issues
+above INFO on any circuit, and `snarkjs r1cs info` confirms the withdraw circuit's interface
+exactly: 3 public inputs, 0 outputs, 46 private inputs.
+
+Not established by any of that: the soundness of `groth16-solana`, Solana's Poseidon and BN254
+syscalls, `snarkjs`, or `circomlib`. This code is verified to be *consistent with* those
+dependencies, not to be safe if one of them is flawed — and a flaw there would leave every test
+here green.
 
 If you are a security researcher, issues and responsible disclosures are welcome.
+
 
 ## Legal
 
