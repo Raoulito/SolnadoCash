@@ -7,12 +7,31 @@ interface NoteDisplayProps {
 
 export default function NoteDisplay({ note, onDone }: NoteDisplayProps) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
 
+  /**
+   * FE-5: this used to be a bare `await navigator.clipboard.writeText(note)`. On a page served
+   * over plaintext HTTP from anything but localhost the Clipboard API is unavailable, so
+   * `navigator.clipboard` is undefined and the click threw a TypeError that went nowhere —
+   * the button did nothing, silently. A denied permission produced the same silence via an
+   * unhandled rejection. This is the one screen in the app where believing a copy worked when
+   * it did not costs the user their deposit, so a failure has to be visible and has to point
+   * at the manual route.
+   */
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(note);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(note);
+      setCopied(true);
+      setCopyFailed(false);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyFailed(true);
+      setCopied(false);
+    }
   };
 
   return (
@@ -42,11 +61,26 @@ export default function NoteDisplay({ note, onDone }: NoteDisplayProps) {
         className={`w-full py-3 rounded-xl font-medium text-sm transition-all ${
           copied
             ? 'bg-green-600/20 text-green-400 border border-green-500/30'
-            : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+            : copyFailed
+              ? 'bg-red-500/10 text-red-400 border border-red-500/30'
+              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
         }`}
       >
-        {copied ? 'Copied!' : 'Copy to clipboard'}
+        {copied ? 'Copied!' : copyFailed ? 'Copy failed' : 'Copy to clipboard'}
       </button>
+
+      {copyFailed && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+          <p className="text-red-400 text-sm font-medium mb-1">
+            Could not copy automatically
+          </p>
+          <p className="text-red-400/70 text-xs leading-relaxed">
+            Your browser blocked clipboard access — this happens on pages not served over
+            HTTPS. Select the note above and copy it manually, or write it down. Do not
+            continue until you have it: it is the only way to withdraw.
+          </p>
+        </div>
+      )}
 
       {/* Confirmation checkbox */}
       <label className="flex items-start gap-3 cursor-pointer group">
