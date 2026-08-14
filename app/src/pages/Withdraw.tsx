@@ -84,6 +84,16 @@ export default function Withdraw() {
     !!connectedWallet && recipient.trim() === connectedWallet.toBase58();
   const sameSession = depositedThisSession();
 
+  /**
+   * The on-chain cap is proportional (denomination/50), and a relayer's real cost is roughly
+   * 0.003 SOL whatever the denomination. So on the upper rungs of the ladder the percentage
+   * stops being a meaningful protection: 2% of 1000 SOL is 20 SOL for work that costs 0.003.
+   * "2.00%" reads as harmless at every size, so the absolute figure is what gets flagged.
+   */
+  const FEE_SANITY_LAMPORTS = 50_000_000n; // 0.05 SOL — ~16x a relayer's real cost
+  const feeLooksExcessive =
+    breakdown !== null && breakdown.relayerFeeMax > FEE_SANITY_LAMPORTS;
+
   // M-1: surface the real anonymity set for the pool this note belongs to.
   const { info: poolInfo, error: poolError } = usePoolInfo(
     parsedNote?.poolAddress ?? null
@@ -473,6 +483,21 @@ export default function Withdraw() {
             The ZK proof is computed in your browser — your secret note never leaves this device.
           </p>
         </div>
+
+        {feeLooksExcessive && breakdown && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <p className="text-amber-400 text-sm font-medium mb-1">
+              This relayer fee is unusually high
+            </p>
+            <p className="text-amber-400/70 text-xs leading-relaxed">
+              The relayer may take up to {(Number(breakdown.relayerFeeMax) / 1e9).toFixed(4)}{' '}
+              SOL. Submitting a withdrawal costs a relayer roughly 0.003 SOL, so this is far
+              above cost. The on-chain cap is a percentage of the denomination, which leaves a
+              lot of room on large pools — it does not mean this fee is reasonable. Consider a
+              different relayer, or run your own.
+            </p>
+          </div>
+        )}
 
         {poolError && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">

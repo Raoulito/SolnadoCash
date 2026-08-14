@@ -25,9 +25,11 @@ const snarkjs = require("snarkjs");
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const DENOMINATION = new anchor.BN(1_000_000_000); // 1 SOL
-const DENOMINATION_BI = 1_000_000_000n;
-const VERSION = 0;
+// Configurable so any rung of the denomination ladder can be smoke-tested, not just 1 SOL:
+//   DENOMINATION_LAMPORTS=500000000 VERSION=0 node scripts/devnet_e2e.js
+const DENOMINATION_BI = BigInt(process.env.DENOMINATION_LAMPORTS || "1000000000");
+const DENOMINATION = new anchor.BN(DENOMINATION_BI.toString());
+const VERSION = parseInt(process.env.VERSION || "0", 10);
 const TREE_DEPTH = 20;
 
 const BN254_FIELD_ORDER =
@@ -262,7 +264,9 @@ async function main() {
 
   // ── Step 3: Initialize pool ──────────────────────────────────────────────
 
-  console.log("\nStep 3 — Initializing pool (0.1 SOL, v0)...");
+  console.log(
+    `\nStep 3 — Initializing pool (${Number(DENOMINATION_BI) / LAMPORTS_PER_SOL} SOL, v${VERSION})...`
+  );
 
   const [poolPda] = findPoolPda(admin.publicKey, DENOMINATION, VERSION, program.programId);
   const [vaultPda] = findVaultPda(poolPda, program.programId);
@@ -437,7 +441,7 @@ async function main() {
   console.log("  Treasury:             ", treasury.publicKey.toBase58());
   console.log("  Relayer:              ", relayer.publicKey.toBase58());
   console.log("");
-  console.log("  Amount deposited:      0.1 SOL");
+  console.log("  Amount deposited:     ", Number(DENOMINATION_BI) / LAMPORTS_PER_SOL, "SOL");
   console.log("  Treasury fee (0.2%):  ", Number(TREASURY_FEE) / LAMPORTS_PER_SOL, "SOL");
   console.log("  Relayer fee:          ", Number(RELAYER_FEE_TAKEN) / LAMPORTS_PER_SOL, "SOL");
   console.log("  Recipient received:   ", recipientReceived / LAMPORTS_PER_SOL, "SOL");

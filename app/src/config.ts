@@ -111,6 +111,10 @@ function loadPools(): PoolConfig[] {
       );
     }
   }
+  // Devnet deployments of the denomination ladder. Each pool is an INDEPENDENT anonymity
+  // set — sets do not merge across denominations, so a rung with few deposits offers
+  // little cover no matter how busy the other rungs are. The UI reports each pool's real
+  // deposit count for this reason.
   return [
     {
       label: '0.1 SOL',
@@ -119,16 +123,76 @@ function loadPools(): PoolConfig[] {
       address: '8SQqZoyaH8w8GPqBkW556Kyi5hY7YoTmwMSMA4wFuW6X',
     },
     {
+      label: '0.5 SOL',
+      denominationSol: 0.5,
+      denominationLamports: 500_000_000n,
+      address: 'HzMaVcgtTHVqvEbeixoeaoeaViM9yDeTLj3yYcXHJYnZ',
+    },
+    {
       label: '1 SOL',
       denominationSol: 1,
       denominationLamports: 1_000_000_000n,
       address: 'Dg7qsi5Xjsh3k6vTBrXTHnsL4iEq4eMUbEzYNMDWaexY',
     },
     {
+      label: '2 SOL',
+      denominationSol: 2,
+      denominationLamports: 2_000_000_000n,
+      address: 'C3t9reeGqYUFg8hbk9yoCWvf5dqPfmuh72jB42peDJAw',
+    },
+    {
+      label: '3 SOL',
+      denominationSol: 3,
+      denominationLamports: 3_000_000_000n,
+      address: '9yLkrkj7S8TVgpDy83jm34vyUHvUr2wcyFw1kY5vyGZV',
+    },
+    {
+      label: '5 SOL',
+      denominationSol: 5,
+      denominationLamports: 5_000_000_000n,
+      address: 'ELFtt8Xg8hdmvLKN19rpJ7hjApNXySwgRNBiBpAwisue',
+    },
+    {
       label: '10 SOL',
       denominationSol: 10,
       denominationLamports: 10_000_000_000n,
       address: '8WAo38JwTXFQ2hUgXs6Bh3sH6SepqLxYr5fVuaCVcTme',
+    },
+    {
+      label: '20 SOL',
+      denominationSol: 20,
+      denominationLamports: 20_000_000_000n,
+      address: 'CfUwhwxKV5Ebws5DyEZjGk5D4UhjrgZJHurLZZrXxSVR',
+    },
+    {
+      label: '50 SOL',
+      denominationSol: 50,
+      denominationLamports: 50_000_000_000n,
+      address: '7VKTL6Gp7agML7xkc2LpuXdB81A8BTCv7Y8wpBLmePtY',
+    },
+    {
+      label: '100 SOL',
+      denominationSol: 100,
+      denominationLamports: 100_000_000_000n,
+      address: 'FNKSaFFyTSV2gSwgGyRGSGYPaS7tC9EBithKrWnQBAoN',
+    },
+    {
+      label: '250 SOL',
+      denominationSol: 250,
+      denominationLamports: 250_000_000_000n,
+      address: '8CqBHkeko7FbAqyWArytTidfFypvH3zahbf6eFHNXw5y',
+    },
+    {
+      label: '500 SOL',
+      denominationSol: 500,
+      denominationLamports: 500_000_000_000n,
+      address: '7MneM1YFrBXJSgYYfwFRT75ZERcEojJYTJVcdyGkdArg',
+    },
+    {
+      label: '1000 SOL',
+      denominationSol: 1000,
+      denominationLamports: 1_000_000_000_000n,
+      address: 'BHrHwvHfr7TxGxgGsdnLqvXWCJx4akUckMjjMeC1ts3U',
     },
   ];
 }

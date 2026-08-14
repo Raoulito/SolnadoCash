@@ -27,10 +27,28 @@ const VERSION = parseInt(process.env.VERSION || "0", 10);
 // rather than letting it default silently.
 const TREASURY_OVERRIDE = process.env.TREASURY || null;
 
+// The denomination ladder. Every pool is a SEPARATE anonymity set — they do not merge — so
+// each rung added splits liquidity further. That is the cost of covering a wide range of
+// amounts, and it is why the UI reports each pool's real deposit count rather than implying
+// the protocol has one big crowd.
+//
+// `version` is pinned PER POOL rather than taken from the global VERSION, because the 1 SOL
+// pool lives at v4: versions 0-3 were deployed against discarded ephemeral treasuries and are
+// abandoned. A single global version would look up 1 SOL at v0 and find a bad-treasury pool.
 const ALL_POOLS = [
-  { label: "0.1 SOL", lamports: 100_000_000 },
-  { label: "1 SOL", lamports: 1_000_000_000 },
-  { label: "10 SOL", lamports: 10_000_000_000 },
+  { label: "0.1 SOL", lamports: 100_000_000, version: 0 },
+  { label: "0.5 SOL", lamports: 500_000_000, version: 0 },
+  { label: "1 SOL", lamports: 1_000_000_000, version: 4 },
+  { label: "2 SOL", lamports: 2_000_000_000, version: 0 },
+  { label: "3 SOL", lamports: 3_000_000_000, version: 0 },
+  { label: "5 SOL", lamports: 5_000_000_000, version: 0 },
+  { label: "10 SOL", lamports: 10_000_000_000, version: 0 },
+  { label: "20 SOL", lamports: 20_000_000_000, version: 0 },
+  { label: "50 SOL", lamports: 50_000_000_000, version: 0 },
+  { label: "100 SOL", lamports: 100_000_000_000, version: 0 },
+  { label: "250 SOL", lamports: 250_000_000_000, version: 0 },
+  { label: "500 SOL", lamports: 500_000_000_000, version: 0 },
+  { label: "1000 SOL", lamports: 1_000_000_000_000, version: 0 },
 ];
 
 function findPoolPda(admin, denomination, version, programId) {
@@ -106,10 +124,11 @@ async function main() {
 
   for (const pool of pools) {
     const denomination = new anchor.BN(pool.lamports);
-    const [poolPda] = findPoolPda(admin.publicKey, pool.lamports, VERSION, program.programId);
+    const poolVersion = pool.version ?? VERSION;
+    const [poolPda] = findPoolPda(admin.publicKey, pool.lamports, poolVersion, program.programId);
     const [vaultPda] = findVaultPda(poolPda, program.programId);
 
-    console.log(`Deploying ${pool.label} pool...`);
+    console.log(`Deploying ${pool.label} pool (version ${poolVersion})...`);
     console.log("  Pool PDA: ", poolPda.toBase58());
     console.log("  Vault PDA:", vaultPda.toBase58());
 
@@ -144,7 +163,7 @@ async function main() {
 
     try {
       const sig = await program.methods
-        .initializePool(denomination, VERSION)
+        .initializePool(denomination, poolVersion)
         .accountsPartial({
           admin: admin.publicKey,
           pool: poolPda,

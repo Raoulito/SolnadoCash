@@ -8,7 +8,7 @@ Built on Groth16 zero-knowledge proofs (BN254), Poseidon hashing, and stealth ad
 
 ## How It Works
 
-1. **Deposit** — User sends one of the fixed denominations (0.1, 1 or 10 SOL) into a shared pool and receives a secret note
+1. **Deposit** — User picks a rung on the denomination ladder (0.1, 0.5, 1, 2, 3, 5, 10, 20, 50, 100, 250, 500 or 1000 SOL) and deposits exactly that amount into the matching pool, receiving a secret note
 2. **Wait** — The deposit sits in a pool alongside all other deposits of the same denomination
 3. **Withdraw** — User (or a relayer on their behalf) submits a ZK proof that they know a valid note, without revealing *which* deposit it corresponds to
 4. **Receive** — Funds arrive at any destination address with zero on-chain link to the original depositor
@@ -168,6 +168,28 @@ For a 1 SOL pool:
 | Treasury | 0.002 SOL |
 | Relayer | ~0.003 SOL (dynamic) |
 | User receives | ~0.995 SOL |
+
+## Denominations
+
+Thirteen fixed rungs: 0.1, 0.5, 1, 2, 3, 5, 10, 20, 50, 100, 250, 500, 1000 SOL. Deposits must
+equal a rung exactly — arbitrary amounts are what make a mixer trivially de-anonymisable, since
+an unusual amount identifies itself on the way out.
+
+**Every rung is a separate anonymity set, and they do not merge.** A ladder covering a wide
+range of amounts therefore divides whatever liquidity exists into thirteen parts. A busy 1 SOL
+pool does nothing for someone withdrawing from a 250 SOL pool with three deposits in it, and the
+first depositor in any pool has no cover at all. This is the direct cost of the convenience, so
+the UI shows each pool's real deposit count and warns when it is small, rather than presenting
+the protocol as one large crowd.
+
+Practical advice that follows from the arithmetic: prefer a rung that already has deposits over
+the rung that matches your amount most neatly, and split a large amount across several
+withdrawals from a busier pool rather than taking one withdrawal from an empty one.
+
+Note also that the relayer fee cap is proportional (`denomination / 50`), while a relayer's real
+cost is roughly 0.003 SOL at any size. On the top rungs that cap bounds very little — 2% of 1000
+SOL is 20 SOL — so the withdraw screen warns on the absolute fee rather than the percentage,
+which looks identical at every size. Choose relayers accordingly, or run your own.
 
 ## Architecture
 
@@ -352,6 +374,13 @@ user pays only for new deposits, and the rebuilt tree is verified against the on
 before proving, so it fails loudly rather than producing an unprovable note — but a first-time
 user with a cold cache still pays O(deposits), and public RPC endpoints rate-limit and prune
 history. An indexer is required before a pool holds many thousands of deposits.
+
+**Thirteen denominations means thirteen small anonymity sets.** The ladder was widened for
+convenience, and that is a direct privacy cost: liquidity splits across every rung and sets
+never merge. On a young deployment most rungs will hold a handful of deposits or none, and a
+withdrawal from a pool with one deposit is fully linkable regardless of the ZK proof. The
+protocol cannot fix this — only depositors can — so the UI reports the real count per pool and
+warns when it is thin. See *Denominations* above.
 
 **Duplicate commitments are accepted on-chain.** Detection is client-side only. Preventing it
 would need a per-commitment PDA, adding a rent-exempt account to every deposit forever, and
