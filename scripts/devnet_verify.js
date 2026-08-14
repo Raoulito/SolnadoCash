@@ -362,7 +362,13 @@ async function setupFixture(program, provider, recipientPredicate = null, commit
   // Normally the generated recipient. commitToAddress lets a check bind the proof
   // to an arbitrary address (e.g. the vault) so guards behind the commitment check
   // become reachable.
-  const committedRecipient = commitToAddress ?? recipient.publicKey;
+  // A callback form is needed for F-5: the nullifier PDA depends on the nullifier hash,
+  // which does not exist until the note is generated a few lines above, so the address to
+  // commit to cannot be passed in by the caller.
+  const committedRecipient =
+    typeof commitToAddress === "function"
+      ? commitToAddress(bigIntToBytes32(note.nullifierHash), poolPda)
+      : commitToAddress ?? recipient.publicKey;
   const recipientField = pubkeyToField(committedRecipient);
   const withdrawalCommitment = poseidonHash(
     relayerField,
@@ -809,6 +815,30 @@ async function verifyH5(program, provider, fx) {
   }
 }
 
+// ── F-5: no payout target may be the nullifier PDA ───────────────────────────
+async function verifyF5(program, provider, fx) {
+  console.log("\n── F-5: payout targets may not alias the nullifier PDA ──");
+
+  // The damaging variant is a pool whose treasury is set to a nullifier PDA, which burns
+  // the protocol fee on every withdrawal of that note. It cannot be reproduced on a live
+  // pool because the treasury is immutable, and creating a booby-trapped pool on devnet
+  // would leave a permanent trap in the pool list. The recipient variant reaches the same
+  // guard on the same code path, so it is what gets exercised here; the treasury variant is
+  // covered against the real program binary in litesvm-tests/tests/f5_treasury_alias.rs.
+  const [nullifierPda] = findNullifierPda(
+    fx.poolPda,
+    Buffer.from(fx.baseArgs.nullifierHash),
+    program.programId
+  );
+
+  await expectReject(
+    "F-5",
+    "the nullifier PDA cannot be the recipient",
+    "DuplicateAccount",
+    () => withdrawCall(program, fx, fx.baseArgs, { recipient: nullifierPda }).rpc()
+  );
+}
+
 // ── M-2: lamport conservation and account distinctness ───────────────────────
 async function verifyM2(program, provider, fxVault, fx) {
   console.log("\n── M-2: lamport conservation / account distinctness ──");
@@ -1019,6 +1049,14 @@ async function main() {
 
   if (wanted("N-3")) {
     await verifyN3(program, provider);
+  }
+  if (wanted("F-5")) {
+    console.log("\nPreparing a fixture for F-5...");
+    const fxNull = await setupFixture(program, provider, null, (nhBytes, poolPda) => {
+      const [pda] = findNullifierPda(poolPda, Buffer.from(nhBytes), program.programId);
+      return pda;
+    });
+    await verifyF5(program, provider, fxNull);
   }
   if (wanted("M-2")) {
     console.log("\nPreparing fixtures for M-2 (one committed to the vault)...");

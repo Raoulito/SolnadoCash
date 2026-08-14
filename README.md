@@ -80,12 +80,12 @@ SOL transfers use **direct lamport mutation**, not `system_program::transfer` (w
 
 | Instruction | Compute Units | Notes |
 |-------------|---------------|-------|
-| `initialize_pool` | 16,289 | Pool + vault PDA creation |
-| `deposit` | 25,955 | 20-level Poseidon Merkle insert + SOL transfer |
-| `withdraw` | 101,300 – 103,300 | Canonical-input guards + Groth16 verify + commitment check + nullifier PDA + fee split + conservation check |
+| `initialize_pool` | 15,655 | Pool + vault PDA creation, incl. the rent-derived denomination floor |
+| `deposit` | 27,455 | Canonical-field check + 20-level Poseidon Merkle insert + SOL transfer |
+| `withdraw` | 101,300 – 103,310 | Canonical-input guards + Groth16 verify + commitment check + nullifier PDA + fee split + conservation and distinctness checks |
 | **Safety margin** | **~93% headroom** | Single-transaction withdrawal, no splitting needed |
 
-Measured on a local validator by `tests/withdraw.ts`. The withdraw figure rose from 99,713 during the security fixes: +2 Poseidon hashes for the collision-resistant pubkey encoding, plus the canonical-input and lamport-conservation guards.
+Measured on a local validator by `tests/withdraw.ts`. The withdraw figure rose from 99,713 during the security fixes: +2 Poseidon hashes for the collision-resistant pubkey encoding, plus the canonical-input, lamport-conservation and nullifier-PDA distinctness guards. `deposit` rose from 25,955 when the canonical-field check was added to the deposit path.
 
 Withdraw is quoted as a range because the root-history scan returns on match, so the cost depends on where the proof's root sits in the 256-entry ring — a root near the end of the buffer costs ~2,000 CU more than one near the start. Worst case is a full 256-entry scan, which the range above does not reach; budget for ~110,000 CU rather than the observed minimum.
 

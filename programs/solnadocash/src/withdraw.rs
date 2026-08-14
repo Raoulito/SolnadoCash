@@ -331,6 +331,23 @@ pub fn process_withdraw(
     require!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
     require!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
 
+    // No payout target may be the nullifier PDA either (F-5). This program creates that
+    // account moments later, so crediting it locks the funds permanently: the account ends
+    // up program-owned with no instruction that can move lamports out of it.
+    //
+    // The treasury case is the one reachable by someone other than the payee. A pool
+    // creator can set `treasury` to the PDA that a chosen nullifier hash will later occupy
+    // — it is system-owned and empty at creation, so the SystemAccount constraint accepts
+    // it — and every withdrawal spending that note would burn the protocol fee. The
+    // recipient and relayer cases are self-inflicted, but the check costs one comparison
+    // each and removes the whole class.
+    //
+    // Note `is_on_curve()` cannot be used to reject PDAs generally: it is
+    // `unimplemented!()` under target_os = "solana" and panics on-chain.
+    require!(*treasury_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    require!(*recipient_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    require!(*relayer_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+
     // 13. Create nullifier PDA via System Program CPI (H-1)
     //
     // `create_account` fails with SystemError::AccountAlreadyInUse when the target
