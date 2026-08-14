@@ -17,10 +17,9 @@ function short(sol: number): string {
 /**
  * Denomination picker.
  *
- * A fixed 3-column grid worked for three pools and breaks for thirteen, so this is a
- * responsive wrapping grid. Pools are keyed by `address` rather than `label`: labels are
- * display strings and two rungs could in principle share one, whereas the pool PDA is
- * unique by construction.
+ * Pools are keyed by `address` rather than `label`: labels are display strings and two rungs
+ * could in principle share one, whereas the pool PDA is unique by construction. The grid is
+ * sized for the current three rungs; widen the column count if the ladder grows.
  */
 export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) {
   return (
@@ -32,7 +31,7 @@ export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) 
         Each amount is a separate pool with its own anonymity set. Larger amounts usually have
         fewer deposits, so they hide you less.
       </p>
-      <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {POOLS.map((pool) => {
           const isSelected = selected?.address === pool.address;
           const undeployed = !pool.address;
@@ -50,7 +49,7 @@ export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) 
                     : 'bg-zinc-800 border-2 border-transparent text-zinc-300 hover:border-zinc-600'
               }`}
             >
-              <span className="block text-base leading-tight">{short(pool.denominationSol)}</span>
+              <span className="block text-lg leading-tight">{short(pool.denominationSol)}</span>
               <span className="block text-[10px] text-zinc-500 mt-0.5">SOL</span>
             </button>
           );

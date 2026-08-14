@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { POOLS } from './config';
 
-const EXPECTED_LADDER = [0.1, 0.5, 1, 2, 3, 5, 10, 20, 50, 100, 250, 500, 1000];
+const EXPECTED_LADDER = [0.1, 1, 10];
 
 describe('denomination ladder', () => {
   it('has every rung, in ascending order', () => {
@@ -53,17 +53,19 @@ describe('denomination ladder', () => {
     }
   });
 
-  it('shows the proportional fee cap losing meaning at the top of the ladder', () => {
-    // Documents the tradeoff rather than asserting it is acceptable: the cap is
-    // denomination/50, while a relayer's real cost is ~0.003 SOL at any size. This is why the
-    // withdraw screen warns on the ABSOLUTE fee and not the percentage.
-    const REAL_COST = 3_000_000n; // ~0.003 SOL
-    const smallest = POOLS[0].denominationLamports / 50n;
-    const largest = POOLS[POOLS.length - 1].denominationLamports / 50n;
+  it('keeps the ladder narrow enough that rungs can actually fill', () => {
+    // A rung only hides anyone once it holds ~50+ deposits, so the count of rungs is bounded
+    // by liquidity. This is a deliberate design constraint, not an oversight: see the comment
+    // in config.ts for the staged growth plan.
+    expect(POOLS.length).toBeLessThanOrEqual(4);
+  });
 
-    // At the bottom rung the cap is actually BELOW a relayer's cost, so relayers subsidise it.
-    expect(smallest).toBeLessThan(REAL_COST);
-    // At the top rung the cap is thousands of times cost, so it bounds almost nothing.
-    expect(largest / REAL_COST).toBeGreaterThan(1000n);
+  it('documents that the proportional fee cap is below cost at the bottom rung', () => {
+    // The cap is denomination/50 while a relayer's real cost is ~0.003 SOL at any size, so on
+    // the 0.1 SOL rung the cap sits BELOW cost and relayers subsidise the withdrawal. This is
+    // why the withdraw screen warns on the ABSOLUTE fee rather than the percentage, and why a
+    // floor/ceiling cap shape is still owed.
+    const REAL_COST = 3_000_000n; // ~0.003 SOL
+    expect(POOLS[0].denominationLamports / 50n).toBeLessThan(REAL_COST);
   });
 });

@@ -35,20 +35,30 @@ const TREASURY_OVERRIDE = process.env.TREASURY || null;
 // `version` is pinned PER POOL rather than taken from the global VERSION, because the 1 SOL
 // pool lives at v4: versions 0-3 were deployed against discarded ephemeral treasuries and are
 // abandoned. A single global version would look up 1 SOL at v0 and find a bad-treasury pool.
+// The ADVERTISED ladder. Three rungs on purpose.
+//
+// Every pool is a separate anonymity set and sets never merge, so each rung added divides the
+// same liquidity further. A rung only hides anyone once it holds roughly 50+ deposits, which
+// bounds the useful rung count at about (total deposits / 50). A wide ladder is also actively
+// worse for privacy: an unusual combination of denominations fingerprints a user across the
+// deposit/withdraw boundary, while repeats of a common rung do not.
+//
+// Staged growth, each gated on the neighbours being deep:
+//   +100 SOL   when the 10 SOL pool passes ~100 deposits, or 10x batching is observed
+//   +0.3/3/30  when each neighbour passes ~100 deposits (3 is the geometric mid-decade)
+//
+// Devnet also carries 0.5, 2, 3, 5, 20, 50, 100, 250, 500 and 1000 SOL pools from an earlier
+// wide-ladder deployment. They are intentionally absent here and from app/src/config.ts: there
+// is no close instruction, so an unwanted pool can only be left unadvertised. Never advertise a
+// rung that cannot be filled — someone will use it and believe they are private.
+//
+// `version` is pinned PER POOL rather than taken from the global VERSION, because the 1 SOL pool
+// lives at v4: versions 0-3 were deployed against discarded ephemeral treasuries and are
+// abandoned. A single global version would look up 1 SOL at v0 and find a bad-treasury pool.
 const ALL_POOLS = [
   { label: "0.1 SOL", lamports: 100_000_000, version: 0 },
-  { label: "0.5 SOL", lamports: 500_000_000, version: 0 },
   { label: "1 SOL", lamports: 1_000_000_000, version: 4 },
-  { label: "2 SOL", lamports: 2_000_000_000, version: 0 },
-  { label: "3 SOL", lamports: 3_000_000_000, version: 0 },
-  { label: "5 SOL", lamports: 5_000_000_000, version: 0 },
   { label: "10 SOL", lamports: 10_000_000_000, version: 0 },
-  { label: "20 SOL", lamports: 20_000_000_000, version: 0 },
-  { label: "50 SOL", lamports: 50_000_000_000, version: 0 },
-  { label: "100 SOL", lamports: 100_000_000_000, version: 0 },
-  { label: "250 SOL", lamports: 250_000_000_000, version: 0 },
-  { label: "500 SOL", lamports: 500_000_000_000, version: 0 },
-  { label: "1000 SOL", lamports: 1_000_000_000_000, version: 0 },
 ];
 
 function findPoolPda(admin, denomination, version, programId) {
