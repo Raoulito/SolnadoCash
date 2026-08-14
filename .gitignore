@@ -56,3 +56,4 @@ tmp/
 temp/
 scripts/verify_devnet.*
 .devnet_verify_leaves.json
+proptest-regressions/
