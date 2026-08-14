@@ -244,18 +244,6 @@ export function createApp({ connection, relayerKeypair, programId }) {
           .json({ error: "NullifierPending" });
       }
 
-      // T26 — Off-chain proof verification
-      let valid;
-      try {
-        valid = await verifyProofOffChain(proof, publicSignals);
-      } catch (verifyErr) {
-        console.error("[submit_proof] Proof verification failed to parse:", verifyErr.message);
-        return res.status(400).json({ error: "InvalidProof", message: "Malformed proof data" });
-      }
-      if (!valid) {
-        return res.status(400).json({ error: "InvalidProof" });
-      }
-
       // Read treasury from pool account
       // N-2: validate the pool account BEFORE spending anything. Without this an
       // attacker points the relayer at an account they authored, passes preflight
@@ -307,6 +295,23 @@ export function createApp({ connection, relayerKeypair, programId }) {
       });
       if (!pf.ok) {
         return res.status(400).json({ error: pf.error, message: pf.message });
+      }
+
+      // Groth16 verification runs LAST of the validation steps, because it is by far
+      // the most expensive: a pairing check costs orders of magnitude more CPU than the
+      // hash and byte comparisons above (not measured precisely, but the difference is
+      // structural). Node is single-threaded, so a flood of syntactically valid but
+      // mathematically invalid proofs would otherwise pin the event loop and starve
+      // legitimate users — the cheap checks now reject that traffic first.
+      let valid;
+      try {
+        valid = await verifyProofOffChain(proof, publicSignals);
+      } catch (verifyErr) {
+        console.error("[submit_proof] Proof verification failed to parse:", verifyErr.message);
+        return res.status(400).json({ error: "InvalidProof", message: "Malformed proof data" });
+      }
+      if (!valid) {
+        return res.status(400).json({ error: "InvalidProof" });
       }
 
       // Mark nullifier as pending
