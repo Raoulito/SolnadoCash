@@ -115,7 +115,10 @@ vi.mock('@coral-xyz/anchor', () => ({
         if (!log.startsWith('__EVENT__:DepositEvent:')) continue;
         const [, , idx, hex] = log.split(':');
         const bytes = hex.padStart(64, '0').match(/.{2}/g)!.map((b) => parseInt(b, 16));
-        yield { name: 'DepositEvent', data: { leaf: bytes, leafIndex: BigInt(idx) } };
+        // snake_case, exactly as Anchor's EventParser yields it. Using camelCase here is why
+        // the suite stayed green through a live "recovered 0 of N deposits" failure: the mock
+        // spoke a field name the real parser never emits.
+        yield { name: 'DepositEvent', data: { leaf: bytes, leaf_index: BigInt(idx) } };
       }
     }
   },
@@ -215,6 +218,24 @@ describe('rebuildMerkleTree leaf cache', () => {
     // getSignaturesForAddress ignores an `until` it cannot find, so the scan returns full
     // history. The merge must cope rather than double-count or leave a gap.
     saveCache(PROGRAM_ID, POOL.toBase58(), LEAVES.slice(0, 20), 'sig-that-no-longer-exists');
+
+    const counters = { getTransaction: 0, getSignaturesForAddress: 0 };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tree = await rebuildMerkleTree(mockConnection(LEAVES, counters) as any, POOL);
+
+    expect(tree.nextIndex).toBe(LEAVES.length);
+    const expected = new MerkleTree(20);
+    for (const l of LEAVES) expected.insert(l);
+    expect(tree.root).toBe(expected.root);
+  });
+
+  it('recovers when the cache has a signature bound but NO leaves (live bug)', async () => {
+    // Reported from live use: "Merkle tree is incomplete: recovered 0 of 2 on-chain deposits".
+    // A cache holding a lastSignature with an empty leaf array makes the incremental scan skip
+    // everything at or before that signature, so the merge sees only later leaf indices, the
+    // dense prefix starts at a gap, and the tree ends up empty. The old code only fell back to a
+    // full rescan when the cache had leaves, so this state could never heal itself.
+    saveCache(PROGRAM_ID, POOL.toBase58(), [], 'sig0000');
 
     const counters = { getTransaction: 0, getSignaturesForAddress: 0 };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

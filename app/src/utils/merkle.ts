@@ -14,9 +14,18 @@ import IDL from '../idl/solnadocash.json';
 import { PROGRAM_ID } from '../config';
 import { clearCache, leafToBigInt, loadCache, saveCache } from './leafCache';
 
+/**
+ * A DepositEvent as the Anchor EventParser yields it.
+ *
+ * The field is `leaf_index`: the parser returns the IDL's snake_case names verbatim rather than
+ * camel-casing them. Reading `leafIndex` produced `undefined`, and `Number(undefined)` is NaN.
+ * Both spellings are accepted here so this cannot break again on an Anchor version that does
+ * convert, and a missing index is now a hard error rather than a silent NaN.
+ */
 interface DepositEventData {
   leaf: number[];
-  leafIndex: bigint;
+  leaf_index?: bigint | number;
+  leafIndex?: bigint | number;
 }
 
 /** How many getTransaction calls to issue concurrently. */
@@ -106,9 +115,22 @@ async function scanDeposits(
     for (const event of eventParser.parseLogs(tx.meta.logMessages)) {
       if (event.name === 'DepositEvent' || event.name === 'depositEvent') {
         const data = event.data as unknown as DepositEventData;
+        const rawIndex = data.leaf_index ?? data.leafIndex;
+        const leafIndex = Number(rawIndex);
+
+        // A NaN here is what caused "recovered 0 of N deposits" in the field: every deposit
+        // collapsed onto one NaN map key, so the dense prefix was empty and the tree came out
+        // empty while looking like an RPC history problem. Fail loudly instead.
+        if (rawIndex === undefined || !Number.isInteger(leafIndex) || leafIndex < 0) {
+          throw new Error(
+            `Deposit event has an unusable leaf index (${String(rawIndex)}). The IDL in ` +
+              `src/idl does not match the deployed program's event layout.`
+          );
+        }
+
         deposits.push({
           leaf: bytesToBigInt(Array.from(data.leaf)),
-          leafIndex: Number(data.leafIndex),
+          leafIndex,
         });
       }
     }
@@ -184,7 +206,11 @@ export async function rebuildMerkleTree(
       dense.push(leaf);
     }
 
-    if (dense.length !== onChain.nextIndex && cached.leaves.length > 0) {
+    // Rescan whenever the merged result is incomplete, regardless of what the cache held. This
+    // was previously gated on `cached.leaves.length > 0`, which meant a cache carrying a
+    // lastSignature but no leaves could never recover: the `until` bound skipped the history it
+    // needed, and the gap check then refused to retry without it.
+    if (dense.length !== onChain.nextIndex) {
       clearCache(PROGRAM_ID, poolKey);
       const full = await scanDeposits(connection, poolAddress, undefined, onProgress);
       newestSignature = full.newestSignature;
