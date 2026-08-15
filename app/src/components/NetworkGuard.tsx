@@ -51,7 +51,7 @@ export default function NetworkGuard() {
             'an unknown cluster';
           setClusterMismatch(
             `This app is configured for ${NETWORK}, but its RPC endpoint serves ${actualNetwork}. ` +
-              `Fix VITE_RPC_ENDPOINT or VITE_SOLANA_NETWORK — deposits made now may be unrecoverable.`
+              `Fix VITE_RPC_ENDPOINT or VITE_SOLANA_NETWORK. Deposits made now may be unrecoverable.`
           );
         }
       })

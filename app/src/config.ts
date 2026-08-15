@@ -53,20 +53,20 @@ export function fatalConfigProblems(): string[] {
   const problems: string[] = [];
   if (relayerTransportIsInsecure() || RELAYER_URL.includes('localhost')) {
     problems.push(
-      `VITE_RELAYER_URL is ${RELAYER_URL} — a plaintext or local relayer must not be used on mainnet.`
+      `VITE_RELAYER_URL is ${RELAYER_URL}. A plaintext or local relayer must not be used on mainnet.`
     );
   }
   if (!env.VITE_RELAYER_URL) {
-    problems.push('VITE_RELAYER_URL is unset — it defaults to a local development relayer.');
+    problems.push('VITE_RELAYER_URL is unset. It defaults to a local development relayer.');
   }
   if (!env.VITE_RPC_ENDPOINT) {
     problems.push(
-      'VITE_RPC_ENDPOINT is unset — the default public endpoint prunes history and breaks withdrawals.'
+      'VITE_RPC_ENDPOINT is unset. The default public endpoint prunes history and breaks withdrawals.'
     );
   }
   if (!env.VITE_POOLS) {
     problems.push(
-      'VITE_POOLS is unset — the built-in pool addresses are devnet deployments.'
+      'VITE_POOLS is unset. The built-in pool addresses are devnet deployments.'
     );
   }
   return problems;

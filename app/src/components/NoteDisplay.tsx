@@ -75,7 +75,7 @@ export default function NoteDisplay({ note, onDone }: NoteDisplayProps) {
             Could not copy automatically
           </p>
           <p className="text-red-400/70 text-xs leading-relaxed">
-            Your browser blocked clipboard access — this happens on pages not served over
+            Your browser blocked clipboard access. This happens on pages not served over
             HTTPS. Select the note above and copy it manually, or write it down. Do not
             continue until you have it: it is the only way to withdraw.
           </p>

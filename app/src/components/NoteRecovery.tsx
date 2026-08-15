@@ -83,7 +83,7 @@ export default function NoteRecovery() {
 
           {copyFailed && (
             <p className="text-red-400 text-xs">
-              Could not copy automatically — select the text above and copy it manually.
+              Could not copy automatically. Select the text above and copy it manually.
             </p>
           )}
 

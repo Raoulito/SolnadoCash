@@ -206,7 +206,7 @@ export default function Withdraw() {
       } else if (msg.includes('NullifierSpent')) {
         setProgressError('This note has already been used. Each note can only be withdrawn once.');
       } else if (msg.includes('InvalidProof')) {
-        setProgressError('Proof verification failed. The Merkle tree may be out of sync — try again.');
+        setProgressError('Proof verification failed. The Merkle tree may be out of sync. Try again.');
       } else if (msg.includes('StaleRoot') || msg.includes('RootNotFound')) {
         if (attempt < MAX_STALE_ROOT_RETRIES) {
           // Rebuild from current state and prove again. No user action required.
@@ -218,14 +218,14 @@ export default function Withdraw() {
         setProgressError(
           'The Merkle root kept changing while your proof was being generated, after ' +
           `${MAX_STALE_ROOT_RETRIES + 1} attempts. This can happen under heavy deposit ` +
-          'traffic. Your note is unspent and still valid — try again in a few minutes.'
+          'traffic. Your note is unspent and still valid. Try again in a few minutes.'
         );
       } else if (msg.includes('InvalidWithdrawalCommitment')) {
-        setProgressError('Withdrawal commitment mismatch. The relayer address or fee may have changed — try again.');
+        setProgressError('Withdrawal commitment mismatch. The relayer address or fee may have changed. Try again.');
       } else if (msg.includes('RelayerFeeExceedsMax')) {
         setProgressError('The relayer fee exceeds the maximum agreed in the proof. Try again with a fresh fee quote.');
       } else if (msg.includes('FeeInvariantViolated')) {
-        setProgressError('Fee invariant check failed on-chain. This is a bug — please report it.');
+        setProgressError('Fee invariant check failed on-chain. This is a bug. Please report it.');
       }
       // Relayer operational errors
       else if (msg.includes('RelayerInsufficientFunds')) {
@@ -424,7 +424,7 @@ export default function Withdraw() {
         <div>
           <h2 className="text-lg font-semibold mb-1">Confirm withdrawal</h2>
           <p className="text-zinc-400 text-sm">
-            A relayer will submit this transaction for you. Review the amounts —
+            A relayer will submit this transaction for you. Review the amounts.
             the relayer fee below is the <strong>maximum</strong> it can take, and
             it is locked into your proof.
           </p>
@@ -452,21 +452,21 @@ export default function Withdraw() {
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Privacy fee (0.2%)</span>
             <span className="text-zinc-300">
-              {breakdown ? sol(breakdown.treasuryFee) : '—'} SOL
+              {breakdown ? sol(breakdown.treasuryFee) : '-'} SOL
             </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">
-              Relayer fee (max{breakdown ? ` — ${breakdown.relayerFeePct.toFixed(2)}%` : ''})
+              Relayer fee (max{breakdown ? ` ${breakdown.relayerFeePct.toFixed(2)}%` : ''})
             </span>
             <span className="text-zinc-300">
-              {breakdown ? sol(breakdown.relayerFeeMax) : '—'} SOL
+              {breakdown ? sol(breakdown.relayerFeeMax) : '-'} SOL
             </span>
           </div>
           <div className="border-t border-zinc-700 pt-3 flex justify-between text-sm">
             <span className="text-zinc-300 font-medium">You receive at least</span>
             <span className="text-zinc-100 font-semibold">
-              {breakdown ? sol(breakdown.userReceivesMin) : '—'} SOL
+              {breakdown ? sol(breakdown.userReceivesMin) : '-'} SOL
             </span>
           </div>
           <div className="flex justify-between text-sm">
@@ -480,7 +480,7 @@ export default function Withdraw() {
         <div className="bg-zinc-800/30 rounded-xl p-4">
           <p className="text-zinc-500 text-xs leading-relaxed">
             Proof generation takes <strong className="text-zinc-400">30-60 seconds</strong>.
-            The ZK proof is computed in your browser — your secret note never leaves this device.
+            The ZK proof is computed in your browser, and your secret note never leaves this device.
           </p>
         </div>
 
@@ -493,7 +493,7 @@ export default function Withdraw() {
               The relayer may take up to {(Number(breakdown.relayerFeeMax) / 1e9).toFixed(4)}{' '}
               SOL. Submitting a withdrawal costs a relayer roughly 0.003 SOL, so this is far
               above cost. The on-chain cap is a percentage of the denomination, which leaves a
-              lot of room on large pools — it does not mean this fee is reasonable. Consider a
+              lot of room on large pools, so it does not mean this fee is reasonable. Consider a
               different relayer, or run your own.
             </p>
           </div>

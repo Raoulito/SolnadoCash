@@ -275,7 +275,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           // landed, so do not imply the attempt simply failed.
           setError(
             `${msg}\n\nYour secret note has been saved in this browser in case the ` +
-              `deposit went through. Check the pool before depositing again — see the ` +
+              `deposit went through. Check the pool before depositing again. See the ` +
               `unsaved-notes banner.`
           );
         }
@@ -324,7 +324,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <div className="bg-zinc-800/30 rounded-xl p-4">
           <p className="text-zinc-500 text-xs leading-relaxed">
-            Your deposit goes into a shared pool. You'll receive a secret note —
+            Your deposit goes into a shared pool. You'll receive a secret note.
             paste it later to withdraw to <strong>any</strong> address, with no
             link to this wallet.
           </p>
@@ -370,7 +370,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
               confirmUnknown ? 'text-amber-400' : 'text-green-400'
             }`}
           >
-            {confirmUnknown ? 'Deposit sent — confirmation unknown' : 'Deposit successful!'}
+            {confirmUnknown ? 'Deposit sent, confirmation unknown' : 'Deposit successful!'}
           </h2>
           {txSig && (
             <a
@@ -441,7 +441,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             <div className="flex gap-3">
               <span className="bg-cyan-600/20 text-cyan-400 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
               <p className="text-zinc-400 text-sm">
-                Enter <strong className="text-zinc-300">any</strong> wallet address as recipient. Wait before withdrawing — withdrawing immediately, from this same network, lets the relayer and your RPC provider correlate the two by timing.
+                Enter <strong className="text-zinc-300">any</strong> wallet address as recipient. Wait before withdrawing. Withdrawing immediately, from this same network, lets the relayer and your RPC provider correlate the two by timing.
               </p>
             </div>
           </div>

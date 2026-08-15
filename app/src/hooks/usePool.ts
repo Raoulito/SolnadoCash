@@ -78,7 +78,7 @@ export function usePoolInfo(poolAddress: string | null) {
         if (!account.owner.equals(new PublicKey(PROGRAM_ID))) {
           setInfo(null);
           setError(
-            'That address is not a SolnadoCash pool — it is owned by another program. ' +
+            'That address is not a SolnadoCash pool. It is owned by another program. ' +
               'Do not rely on any figures for it.'
           );
           return;

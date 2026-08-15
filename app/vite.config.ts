@@ -110,6 +110,10 @@ function cspPlugin(env: Record<string, string | undefined>) {
 
   return {
     name: 'inject-csp',
+    // Build only. The dev server needs an inline preamble script for React refresh and an HMR
+    // websocket to its own origin, neither of which this policy allows — and the right fix is
+    // not to weaken the shipped policy to accommodate the dev server.
+    apply: 'build' as const,
     transformIndexHtml(html: string) {
       return html.replace(
         '<head>',
@@ -125,7 +129,14 @@ export default defineConfig(({ mode }) => {
   void mode;
   return {
     // jsdom gives the leaf-cache tests a real localStorage.
-    test: { environment: 'jsdom', include: ['src/**/*.test.ts'] },
+    test: {
+      environment: 'jsdom',
+      include: ['src/**/*.test.ts'],
+      // The security attack suite needs the hostile relayer running and fails loudly when it
+      // is not, by design. Excluding it here keeps `npm test` self-contained; run it
+      // deliberately with `npm run test:security` after starting the server.
+      exclude: ['src/security/**'],
+    },
     plugins: [
       react(),
       nodePolyfills({

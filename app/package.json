@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "npm run build:sdk && tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:security": "vitest run --config vitest.security.config.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

@@ -51,7 +51,7 @@ export default function PrivacyNotice({
           </p>
           <p className="text-amber-400/70 text-xs leading-relaxed">
             Withdrawing now, from the same IP address and RPC provider, lets those
-            parties correlate your deposit with this withdrawal by timing — no
+            parties correlate your deposit with this withdrawal by timing, with no
             cryptography required. For meaningful privacy, withdraw later, from a
             different network.
           </p>

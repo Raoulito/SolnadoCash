@@ -48,7 +48,7 @@ export default function AnonymitySet({
         {tier.tone === 'weak' ? (
           context === 'deposit' ? (
             <>
-              This pool is {tier.label} — your withdrawal could be linked to this
+              This pool is {tier.label}, so your withdrawal could be linked to this
               deposit by elimination. Privacy improves as more people deposit the
               same amount; consider waiting before withdrawing.
             </>
@@ -62,7 +62,7 @@ export default function AnonymitySet({
         ) : (
           <>
             Your withdrawal is indistinguishable from any of these {depositCount}{' '}
-            deposits. The set covers this pool only — pools from other deployers do
+            deposits. The set covers this pool only. Pools from other deployers do
             not merge.
           </>
         )}
