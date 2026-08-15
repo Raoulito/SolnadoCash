@@ -16,6 +16,30 @@ const POOL_DISCRIMINATOR = new Uint8Array([0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0
 /** Minimum size of a real Pool account (root ring + filled subtrees). */
 const POOL_MIN_LEN = 8 + 8968;
 
+/**
+ * Deposits at which a pool stops accepting new ones, enforced on-chain by the program
+ * (SATURATION_THRESHOLD in state.rs). Exported so the UI cannot drift from the check below.
+ */
+export const SATURATION_THRESHOLD = 950_000;
+
+/**
+ * Capacity as a percentage, never as a raw count.
+ *
+ * The question this answers is only "can this pool still take deposits", so the exact number of
+ * deposits is not shown: on a young pool that figure reads as a privacy score and discourages
+ * the first depositors, which is why the anonymity panel stopped displaying it too.
+ *
+ * A non-empty pool that rounds to zero is reported as "<1%" rather than "0%", so a pool that is
+ * in use is never described as untouched.
+ */
+export function capacityLabel(nextIndex: number): string {
+  if (nextIndex <= 0) return '0%';
+  const pct = (nextIndex / SATURATION_THRESHOLD) * 100;
+  if (pct >= 99.5) return '100%';
+  if (pct < 1) return '<1%';
+  return `${Math.round(pct)}%`;
+}
+
 export interface PoolInfo {
   nextIndex: number;
   isPaused: boolean;
@@ -102,7 +126,7 @@ export function usePoolInfo(poolAddress: string | null) {
         setInfo({
           nextIndex,
           isPaused: data[IS_PAUSED_OFFSET] === 1,
-          isSaturated: nextIndex >= 950_000,
+          isSaturated: nextIndex >= SATURATION_THRESHOLD,
         });
       })
       .catch((err) => {

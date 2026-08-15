@@ -6,7 +6,7 @@ import { generateNote, initPoseidon, poseidonHash } from '@solnadocash/sdk';
 import PoolSelector from '../components/PoolSelector';
 import AnonymitySet from '../components/AnonymitySet';
 import NoteDisplay from '../components/NoteDisplay';
-import { usePoolInfo } from '../hooks/usePool';
+import { capacityLabel, usePoolInfo } from '../hooks/usePool';
 import { getProgram, buildDepositTx } from '../utils/program';
 import { markDepositedThisSession } from '../components/PrivacyNotice';
 import { stageNote, markNoteStatus, clearNote } from '../utils/noteVault';
@@ -110,8 +110,8 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             {poolInfo && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-400">Pool capacity used</span>
-                <span className="text-zinc-200">
-                  {poolInfo.nextIndex.toLocaleString()} / 950,000
+                <span className="text-zinc-200 tnum">
+                  {capacityLabel(poolInfo.nextIndex)}
                 </span>
               </div>
             )}

@@ -12,7 +12,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, cleanup } from '@testing-library/react';
 import { PublicKey } from '@solana/web3.js';
-import { usePoolInfo } from './usePool';
+import { capacityLabel, SATURATION_THRESHOLD, usePoolInfo } from './usePool';
 import { PROGRAM_ID } from '../config';
 
 const POOL_MIN_LEN = 8 + 8968;
@@ -123,5 +123,42 @@ describe('usePoolInfo validation', () => {
     const { result } = renderHook(() => usePoolInfo(SOME_POOL));
     await waitFor(() => expect(result.current.info).not.toBeNull());
     expect(result.current.info?.isSaturated).toBe(true);
+  });
+});
+
+describe('capacityLabel', () => {
+  it('reports an empty pool as 0%', () => {
+    expect(capacityLabel(0)).toBe('0%');
+  });
+
+  it('never describes a pool that is in use as untouched', () => {
+    // One deposit is 0.0001% of capacity. Rounding that to "0%" would call a pool with funds in
+    // it empty, so anything non-zero but tiny reads as "<1%".
+    expect(capacityLabel(1)).toBe('<1%');
+    expect(capacityLabel(9_499)).toBe('<1%');
+  });
+
+  it('rounds to whole percentages once there is something to round', () => {
+    expect(capacityLabel(95_000)).toBe('10%');
+    expect(capacityLabel(475_000)).toBe('50%');
+  });
+
+  it('reports a saturated pool as 100%', () => {
+    expect(capacityLabel(SATURATION_THRESHOLD)).toBe('100%');
+    expect(capacityLabel(SATURATION_THRESHOLD + 10)).toBe('100%');
+  });
+
+  it('never exposes a raw deposit count', () => {
+    // The only meaningful property is that every output is a percentage token and nothing
+    // else. A substring check against the input is not: "<1%" unavoidably contains "1".
+    for (const n of [0, 1, 42, 118, 9_499, 95_000, 475_000, 950_000]) {
+      expect(capacityLabel(n)).toMatch(/^(<1%|\d{1,3}%)$/);
+    }
+    // A distinctive count must not survive into the output.
+    expect(capacityLabel(123_456)).not.toContain('123456');
+  });
+
+  it('handles a negative or nonsense count without producing NaN', () => {
+    expect(capacityLabel(-5)).toBe('0%');
   });
 });
