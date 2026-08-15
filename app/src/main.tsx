@@ -2,7 +2,14 @@ import { StrictMode, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
-import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+// Imported from the individual adapter packages rather than @solana/wallet-adapter-wallets.
+// The meta-package depends on every adapter it knows about — Trezor, Ledger, WalletConnect and
+// the rest — which pulled in ethers, axios and protobufjs and 133 advisories including two
+// critical (protobufjs arbitrary code execution, via @trezor/transport). Tree-shaking kept most
+// of it out of the bundle, but it was still installed and executing postinstall scripts on every
+// npm install, which is the wrong attack surface for an app that holds secret notes.
+import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
+import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 import './index.css';
