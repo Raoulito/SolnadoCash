@@ -29,7 +29,7 @@ pub fn handler(ctx: Context<Deposit>, commitment: [u8; 32]) -> Result<()> {
             ],
             ctx.program_id,
         ).map_err(|_| error!(ErrorCode::InvalidPoolPda))?;
-        require!(
+        crate::guard!(
             pool_key == expected_pool,
             ErrorCode::InvalidPoolPda
         );

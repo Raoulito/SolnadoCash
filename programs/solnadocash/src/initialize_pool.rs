@@ -7,8 +7,8 @@ use crate::zeros::ZEROS;
 use crate::InitializePool;
 
 pub fn handler(ctx: Context<InitializePool>, denomination: u64, version: u8) -> Result<()> {
-    require!(denomination >= 500, ErrorCode::DenominationTooLow);
-    require!(version < 255, ErrorCode::VersionTooHigh);
+    crate::guard!(denomination >= 500, ErrorCode::DenominationTooLow);
+    crate::guard!(version < 255, ErrorCode::VersionTooHigh);
 
     // N-3: a pool must not accept deposits that cannot be withdrawn privately.
     //
@@ -29,7 +29,7 @@ pub fn handler(ctx: Context<InitializePool>, denomination: u64, version: u8) -> 
     let min_recipient_balance = rent.minimum_balance(0);
     let worst_case = crate::withdraw::worst_case_user_amount(denomination)
         .ok_or_else(|| error!(ErrorCode::DenominationTooLow))?;
-    require!(worst_case >= min_recipient_balance, ErrorCode::DenominationTooLow);
+    crate::guard!(worst_case >= min_recipient_balance, ErrorCode::DenominationTooLow);
 
     let mut pool = ctx.accounts.pool.load_init()?;
 

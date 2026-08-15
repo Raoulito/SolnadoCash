@@ -27,8 +27,8 @@ pub fn compute_fee_split(
     relayer_fee_taken: u64,
     relayer_fee_max: u64,
 ) -> Result<(u64, u64, u64)> {
-    require!(relayer_fee_taken <= relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
-    require!(
+    crate::guard!(relayer_fee_taken <= relayer_fee_max, ErrorCode::RelayerFeeExceedsMax);
+    crate::guard!(
         relayer_fee_max <= denomination / MAX_RELAYER_FEE_DIVISOR,
         ErrorCode::RelayerFeeMaxTooHigh
     );
@@ -38,7 +38,7 @@ pub fn compute_fee_split(
         .checked_sub(treasury_fee)
         .and_then(|x| x.checked_sub(relayer_fee_taken))
         .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
-    require!(user_amount > 0, ErrorCode::UserAmountZero);
+    crate::guard!(user_amount > 0, ErrorCode::UserAmountZero);
 
     Ok((treasury_fee, relayer_fee_taken, user_amount))
 }
@@ -183,17 +183,17 @@ pub fn process_withdraw(
     args: WithdrawArgs,
 ) -> Result<()> {
     // 0. Verify sufficient accounts passed
-    require!(accounts.len() >= 7, ErrorCode::InvalidPoolPda);
+    crate::guard!(accounts.len() >= 7, ErrorCode::InvalidPoolPda);
 
     // 0b. C-1: reject non-canonical public inputs BEFORE any other work.
     //     Must precede the root scan, the double-spend check and proof verification,
     //     so an aliased value can never reach a code path that consumes its bytes.
-    require!(
+    crate::guard!(
         is_canonical_fr(&args.nullifier_hash),
         ErrorCode::NonCanonicalPublicInput
     );
-    require!(is_canonical_fr(&args.root), ErrorCode::NonCanonicalPublicInput);
-    require!(
+    crate::guard!(is_canonical_fr(&args.root), ErrorCode::NonCanonicalPublicInput);
+    crate::guard!(
         is_canonical_fr(&args.withdrawal_commitment),
         ErrorCode::NonCanonicalPublicInput
     );
@@ -207,17 +207,17 @@ pub fn process_withdraw(
     let system_program = &accounts[IDX_SYSTEM_PROGRAM];
 
     // 1a. Verify pool is owned by this program
-    require!(*pool_info.owner == *program_id, ErrorCode::InvalidPoolPda);
+    crate::guard!(*pool_info.owner == *program_id, ErrorCode::InvalidPoolPda);
 
     // 1b. Verify pool discriminator matches Pool struct
     const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
     {
         let data = pool_info.try_borrow_data()?;
-        require!(data.len() >= 8 && data[..8] == POOL_DISCRIMINATOR, ErrorCode::InvalidPoolPda);
+        crate::guard!(data.len() >= 8 && data[..8] == POOL_DISCRIMINATOR, ErrorCode::InvalidPoolPda);
     }
 
     // 1c. Verify system program
-    require!(
+    crate::guard!(
         *system_program.key == anchor_lang::solana_program::system_program::ID,
         ErrorCode::InvalidSystemProgram
     );
@@ -246,7 +246,7 @@ pub fn process_withdraw(
     }
 
     // 2. Verify relayer is signer
-    require!(relayer_info.is_signer, ErrorCode::RelayerNotSigner);
+    crate::guard!(relayer_info.is_signer, ErrorCode::RelayerNotSigner);
 
     // 2b. Fee sanity checks (H-3). Cheap arithmetic, so run them before the root
     // scan and Groth16 verification: an invalid fee request is rejected for a few
@@ -268,11 +268,11 @@ pub fn process_withdraw(
         &[b"vault", pool_info.key.as_ref(), &[vault_bump]],
         program_id,
     ).map_err(|_| error!(ErrorCode::InvalidVaultPda))?;
-    require!(*vault_info.key == expected_vault, ErrorCode::InvalidVaultPda);
-    require!(*vault_info.owner == *program_id, ErrorCode::InvalidVaultPda);
+    crate::guard!(*vault_info.key == expected_vault, ErrorCode::InvalidVaultPda);
+    crate::guard!(*vault_info.owner == *program_id, ErrorCode::InvalidVaultPda);
 
     // 4. Verify treasury matches pool
-    require!(*treasury_info.key == pool_treasury, ErrorCode::InvalidTreasury);
+    crate::guard!(*treasury_info.key == pool_treasury, ErrorCode::InvalidTreasury);
 
     // 5. Verify root is recent (scan root_history in-place, no stack allocation).
     //
@@ -281,19 +281,19 @@ pub fn process_withdraw(
     // it is the one root that carries no pool-specific meaning. No legitimate
     // withdrawal can use it: a valid leaf in an empty tree would require a Poseidon
     // preimage of zero. Cheap defence against ever making that assumption load-bearing.
-    require!(args.root != EMPTY_TREE_ROOT, ErrorCode::RootNotFound);
+    crate::guard!(args.root != EMPTY_TREE_ROOT, ErrorCode::RootNotFound);
     let root_found = is_known_root_in_account(pool_info, &args.root)?;
-    require!(root_found, ErrorCode::RootNotFound);
+    crate::guard!(root_found, ErrorCode::RootNotFound);
 
     // 6. Verify nullifier PDA does NOT exist (double-spend check)
-    require!(nullifier_info.data_is_empty(), ErrorCode::NullifierAlreadySpent);
+    crate::guard!(nullifier_info.data_is_empty(), ErrorCode::NullifierAlreadySpent);
 
     // 7. Verify nullifier PDA address is correct (canonical bump only — prevents double-spend)
     let (expected_nullifier, canonical_bump) = Pubkey::find_program_address(
         &[b"nullifier", pool_info.key.as_ref(), &args.nullifier_hash],
         program_id,
     );
-    require!(*nullifier_info.key == expected_nullifier, ErrorCode::InvalidPoolPda);
+    crate::guard!(*nullifier_info.key == expected_nullifier, ErrorCode::InvalidPoolPda);
 
     // 8. Groth16 proof verification
     let public_inputs = [args.nullifier_hash, args.root, args.withdrawal_commitment];
@@ -319,7 +319,7 @@ pub fn process_withdraw(
         Endianness::BigEndian,
         &[&relayer_field, &fee_max_bytes, &recipient_field],
     ).map_err(|_| error!(ErrorCode::PoseidonFailed))?.0;
-    require!(computed_commitment == args.withdrawal_commitment, ErrorCode::InvalidWithdrawalCommitment);
+    crate::guard!(computed_commitment == args.withdrawal_commitment, ErrorCode::InvalidWithdrawalCommitment);
 
     // 12. Account distinctness (M-2).
     //
@@ -327,9 +327,9 @@ pub fn process_withdraw(
     // would net lamports back into the vault and make the conservation check below
     // meaningless. Duplicate AccountInfos share a lamport cell, so this cannot be
     // caught after the fact by arithmetic alone.
-    require!(*recipient_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
-    require!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
-    require!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*recipient_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
 
     // No payout target may be the nullifier PDA either (F-5). This program creates that
     // account moments later, so crediting it locks the funds permanently: the account ends
@@ -344,9 +344,9 @@ pub fn process_withdraw(
     //
     // Note `is_on_curve()` cannot be used to reject PDAs generally: it is
     // `unimplemented!()` under target_os = "solana" and panics on-chain.
-    require!(*treasury_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
-    require!(*recipient_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
-    require!(*relayer_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*treasury_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*recipient_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*relayer_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
 
     // 13. Create nullifier PDA via System Program CPI (H-1)
     //
@@ -392,7 +392,7 @@ pub fn process_withdraw(
         // Step 6 already proved the account has no data. An account with data but
         // a foreign owner is unreachable here (only this program can sign for the
         // PDA), but assert it rather than rely on that reasoning.
-        require!(
+        crate::guard!(
             *nullifier_info.owner == anchor_lang::solana_program::system_program::ID,
             ErrorCode::NullifierAlreadySpent
         );
@@ -444,7 +444,7 @@ pub fn process_withdraw(
     drop(nullifier_data);
 
     // 15. Direct lamport mutation for SOL transfers (vault is program-owned PDA)
-    require!(vault_info.lamports() >= pool_denomination, ErrorCode::InsufficientVaultBalance);
+    crate::guard!(vault_info.lamports() >= pool_denomination, ErrorCode::InsufficientVaultBalance);
 
     // Snapshot for the conservation check below (M-2). The previous "fee invariant"
     // asserted treasury_fee + relayer_fee_taken + user_amount == denomination
@@ -490,19 +490,19 @@ pub fn process_withdraw(
         owed
     };
 
-    require!(
+    crate::guard!(
         vault_info.lamports() == vault_before - pool_denomination,
         ErrorCode::FeeInvariantViolated
     );
-    require!(
+    crate::guard!(
         treasury_info.lamports() == treasury_before + credit_owed_to(treasury_info.key),
         ErrorCode::FeeInvariantViolated
     );
-    require!(
+    crate::guard!(
         relayer_info.lamports() == relayer_before + credit_owed_to(relayer_info.key),
         ErrorCode::FeeInvariantViolated
     );
-    require!(
+    crate::guard!(
         recipient_info.lamports() == recipient_before + credit_owed_to(recipient_info.key),
         ErrorCode::FeeInvariantViolated
     );
@@ -510,7 +510,6 @@ pub fn process_withdraw(
     // 16. Emit withdrawal event
     emit!(WithdrawalEvent {
         nullifier_hash: args.nullifier_hash,
-        recipient: *recipient_info.key,
         relayer: *relayer_info.key,
         relayer_fee: args.relayer_fee_taken,
         treasury_fee,

@@ -2,6 +2,55 @@ use anchor_lang::prelude::*;
 
 declare_id!("DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59");
 
+/// Like Anchor's `require!`, but the error carries no source location when the
+/// `strip-error-origins` feature is enabled.
+///
+/// Anchor's `require!` expands to `error!(..)`, which calls `.with_source(source!())` and so
+/// attaches the filename and line to the error. The runtime then logs
+/// "AnchorError thrown in programs/solnadocash/src/withdraw.rs:289", which anyone can read from a
+/// transaction simulation.
+///
+/// Whether that matters is a judgement call, and the default here is to KEEP it. The code is
+/// public, the IDL is published, the binary is dumpable, and the error number is in the
+/// transaction result whether or not the log says anything, so stripping the origin hides nothing
+/// an attacker could not derive. Against that, the file and line are genuinely useful: they
+/// pinpointed two live bugs in this program during development. Debuggability wins by default.
+///
+/// The feature exists for a deployment that would rather not publish the mapping anyway, and for
+/// the case where the source is not public. Enabling it costs you the ability to locate a failure
+/// from a user's transaction, which is precisely when you most want it.
+///
+///   cargo build-sbf -- --features strip-error-origins
+#[cfg(not(feature = "strip-error-origins"))]
+#[macro_export]
+macro_rules! guard {
+    ($cond:expr, $err:expr) => {
+        if !($cond) {
+            // Built explicitly rather than delegating to `anchor_lang::require!`. Passing an
+            // already-captured `expr` fragment into that macro matches its `$error:tt` arm, which
+            // expands to `$crate::ErrorCode::$error` and fails to compile. Constructing the error
+            // here avoids the re-parse and is equivalent to what `require!` produces.
+            return Err(
+                anchor_lang::error::Error::from($err).with_source(anchor_lang::source!())
+            );
+        }
+    };
+}
+
+/// Origin-stripped variant. `ErrorCode::X.into()` builds the error through the generated
+/// `From` impl, which leaves `error_origin` as `None`, so the log names the error code and message
+/// but no file or line. The error NUMBER is unchanged either way, so callers and the relayer's
+/// error mapping keep working.
+#[cfg(feature = "strip-error-origins")]
+#[macro_export]
+macro_rules! guard {
+    ($cond:expr, $err:expr) => {
+        if !($cond) {
+            return Err($err.into());
+        }
+    };
+}
+
 pub mod error;
 pub mod events;
 pub mod state;

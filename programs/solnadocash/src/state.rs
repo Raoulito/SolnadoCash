@@ -79,9 +79,9 @@ pub struct VaultAccount {}
 
 impl Pool {
     pub fn insert(&mut self, leaf: [u8; 32]) -> Result<[u8; 32]> {
-        require!(self.is_paused == 0, ErrorCode::PoolPaused);
-        require!(self.next_index < SATURATION_THRESHOLD, ErrorCode::PoolSaturated);
-        require!(self.next_index < (1u64 << TREE_DEPTH), ErrorCode::TreeFull);
+        crate::guard!(self.is_paused == 0, ErrorCode::PoolPaused);
+        crate::guard!(self.next_index < SATURATION_THRESHOLD, ErrorCode::PoolSaturated);
+        crate::guard!(self.next_index < (1u64 << TREE_DEPTH), ErrorCode::TreeFull);
 
         let mut current_index = self.next_index;
         let mut current_level_hash = leaf;

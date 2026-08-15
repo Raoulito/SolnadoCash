@@ -9,6 +9,12 @@ crate-type = ["cdylib", "lib"]
 name = "solnadocash"
 
 [features]
+# Remove the source filename and line from on-chain error logs. OFF by default: the code is
+# public and the error number is in the transaction result regardless, so stripping hides nothing
+# an attacker could not derive, while the file:line is what lets you locate a failure from a
+# user's transaction. Enable for a deployment that would rather not publish the mapping.
+strip-error-origins = []
+
 no-entrypoint = []
 # Declared because anchor's derive macros emit #[cfg(feature = "anchor-debug")];
 # without it `cargo clippy -- -D warnings` fails on unexpected_cfgs.

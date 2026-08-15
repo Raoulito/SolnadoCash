@@ -8,36 +8,6 @@
   },
   "instructions": [
     {
-      "name": "benchmark_groth16",
-      "discriminator": [
-        176,
-        115,
-        216,
-        107,
-        149,
-        157,
-        249,
-        15
-      ],
-      "accounts": [],
-      "args": []
-    },
-    {
-      "name": "benchmark_poseidon",
-      "discriminator": [
-        4,
-        14,
-        230,
-        87,
-        63,
-        22,
-        31,
-        25
-      ],
-      "accounts": [],
-      "args": []
-    },
-    {
       "name": "deposit",
       "discriminator": [
         242,
@@ -224,7 +194,13 @@
       "accounts": [
         {
           "name": "pool",
-          "writable": true
+          "docs": [
+            "Deliberately NOT `mut` (F-4): withdraw only reads pool fields and the root",
+            "history — the sole mutable data borrow in the instruction is the nullifier",
+            "account. Granting a write capability the instruction never uses would let a",
+            "later edit mutate pool state without that showing up in the account",
+            "declaration. Callers may still pass it writable; nothing breaks."
+          ]
         },
         {
           "name": "vault",
@@ -441,6 +417,36 @@
       "code": 6020,
       "name": "BenchmarkPoseidonHash",
       "msg": "Poseidon hash failed in benchmark"
+    },
+    {
+      "code": 6021,
+      "name": "InvalidSystemProgram",
+      "msg": "invalid system program"
+    },
+    {
+      "code": 6022,
+      "name": "InsufficientVaultBalance",
+      "msg": "vault has insufficient balance"
+    },
+    {
+      "code": 6023,
+      "name": "NonCanonicalPublicInput",
+      "msg": "public input is not a canonical BN254 field element"
+    },
+    {
+      "code": 6024,
+      "name": "RelayerFeeMaxTooHigh",
+      "msg": "relayer fee max exceeds 2% of denomination"
+    },
+    {
+      "code": 6025,
+      "name": "UserAmountZero",
+      "msg": "fees would leave the user with nothing"
+    },
+    {
+      "code": 6026,
+      "name": "DuplicateAccount",
+      "msg": "vault must not also be the recipient, treasury or relayer"
     }
   ],
   "types": [
@@ -665,10 +671,6 @@
           {
             "name": "relayer_fee_taken",
             "type": "u64"
-          },
-          {
-            "name": "nullifier_bump",
-            "type": "u8"
           }
         ]
       }
@@ -686,10 +688,6 @@
                 32
               ]
             }
-          },
-          {
-            "name": "recipient",
-            "type": "pubkey"
           },
           {
             "name": "relayer",
