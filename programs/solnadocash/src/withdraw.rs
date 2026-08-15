@@ -460,23 +460,50 @@ pub fn process_withdraw(
     **relayer_info.try_borrow_mut_lamports()? += args.relayer_fee_taken;
     **recipient_info.try_borrow_mut_lamports()? += user_amount;
 
-    // Real invariant: the vault paid out exactly one denomination, and every
-    // credited account received exactly its share. Catches any future aliasing or
-    // arithmetic slip that the tautology could not.
+    // Real invariant: the vault paid out exactly one denomination, and every credited account
+    // received exactly the total owed to ITS KEY.
+    //
+    // The per-key total matters because two payee slots may legitimately be the same account.
+    // The common case is a solo operator whose relayer wallet is also the pool treasury: both
+    // credits land in one lamport cell, so asserting that the treasury rose by exactly
+    // treasury_fee fails even though the ledger balances perfectly. That made withdrawals
+    // impossible for that configuration, reported as "fee invariant violated", which reads as a
+    // protocol bug rather than a naive check. Recipient == relayer and recipient == treasury are
+    // equally harmless and were equally broken.
+    //
+    // This does not weaken the guard. Aliasing that would actually move value incorrectly is
+    // rejected earlier and unconditionally: no payee may be the vault, since crediting the debit
+    // source nets funds back into it, and none may be the nullifier PDA, since that account is
+    // program-owned with no way to move lamports out (step 12). What remains here is arithmetic:
+    // the sum credited to each distinct account must equal the sum of the shares assigned to it.
+    let credit_owed_to = |key: &Pubkey| -> u64 {
+        let mut owed = 0u64;
+        if treasury_info.key == key {
+            owed += treasury_fee;
+        }
+        if relayer_info.key == key {
+            owed += args.relayer_fee_taken;
+        }
+        if recipient_info.key == key {
+            owed += user_amount;
+        }
+        owed
+    };
+
     require!(
         vault_info.lamports() == vault_before - pool_denomination,
         ErrorCode::FeeInvariantViolated
     );
     require!(
-        treasury_info.lamports() == treasury_before + treasury_fee,
+        treasury_info.lamports() == treasury_before + credit_owed_to(treasury_info.key),
         ErrorCode::FeeInvariantViolated
     );
     require!(
-        relayer_info.lamports() == relayer_before + args.relayer_fee_taken,
+        relayer_info.lamports() == relayer_before + credit_owed_to(relayer_info.key),
         ErrorCode::FeeInvariantViolated
     );
     require!(
-        recipient_info.lamports() == recipient_before + user_amount,
+        recipient_info.lamports() == recipient_before + credit_owed_to(recipient_info.key),
         ErrorCode::FeeInvariantViolated
     );
 
