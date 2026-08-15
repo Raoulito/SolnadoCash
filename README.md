@@ -416,8 +416,14 @@ history. An indexer is required before a pool holds many thousands of deposits.
 three-rung ladder is a deliberate attempt to concentrate what liquidity exists rather than a
 missing feature. Even so, on a young deployment a rung may hold a handful of deposits, and a
 withdrawal from a pool with one deposit is fully linkable regardless of the ZK proof. The
-protocol cannot fix this — only depositors can — so the UI reports the real count per pool and
-warns when it is thin. See *Denominations* above.
+protocol cannot fix this, only depositors can. The UI does not display the per-pool deposit
+count: at deposit time that number is close to meaningless, since what matters is how many
+deposits exist when you eventually withdraw, and a prominent "0 deposits" discourages the first
+depositors a pool needs before it can protect anyone. The tradeoff is that a user can no longer
+see from the UI whether they are withdrawing into a set of three or three hundred; that figure is
+on-chain and `scripts/check_pools.js` prints it. Instead the UI gives the advice that holds
+regardless of the count and that a single user can act on: wait longer between depositing and
+withdrawing. See *Denominations* above.
 
 **Duplicate commitments are accepted on-chain.** Detection is client-side only. Preventing it
 would need a per-commitment PDA, adding a rent-exempt account to every deposit forever, and

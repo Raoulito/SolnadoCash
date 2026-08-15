@@ -1,71 +1,44 @@
 /**
- * Anonymity set indicator (M-1).
+ * Privacy timing notice.
  *
- * Privacy here is bounded by how many OTHER deposits share the pool: a withdrawal
- * from a pool with 3 deposits is trivially linkable by elimination, regardless of
- * the ZK proof. The UI previously showed the deposit count only as a capacity bar
- * ("N / 950,000"), which reads as "plenty of room left" rather than "this is how
- * hidden you are".
+ * This previously displayed the pool's live deposit count as the anonymity set size (M-1).
+ * That number is now deliberately not shown, and the tradeoff is worth recording.
  *
- * Pool PDA seeds include the admin key, so every deployer creates a disjoint pool
- * per denomination and sets do not merge across deployments — another reason to
- * show the real number for the specific pool being used.
+ * The argument for removing it: the count at the moment you are looking at it is not the set
+ * you will actually hide in. On the deposit screen it is close to meaningless, because the
+ * number that matters is how many deposits exist when you eventually withdraw, which is
+ * unknowable at deposit time and is usually larger. A prominent "0 deposits" on a young pool
+ * discourages the very first depositors, and a pool needs first depositors before it can
+ * protect anyone.
+ *
+ * What is lost: on the withdraw screen the count IS the current anonymity set, so a user can no
+ * longer see from the UI whether they are hiding among three deposits or three hundred. Anyone
+ * who wants that figure can read it from the chain, and scripts/check_pools.js prints it.
+ *
+ * What replaces it is advice that stays true regardless of the count, and that the user can
+ * actually act on: wait. Time between deposit and withdrawal is the one variable a single user
+ * controls, and it defeats the timing correlation that no amount of ZK proving addresses.
  */
-export function anonymityTier(depositCount: number): {
-  label: string;
-  tone: 'weak' | 'fair' | 'good';
-} {
-  if (depositCount < 10) return { label: 'very small', tone: 'weak' };
-  if (depositCount < 50) return { label: 'small', tone: 'weak' };
-  if (depositCount < 200) return { label: 'moderate', tone: 'fair' };
-  return { label: 'reasonable', tone: 'good' };
-}
-
-const TONE_CLASSES: Record<string, string> = {
-  weak: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
-  fair: 'bg-zinc-800/50 border-zinc-700 text-zinc-300',
-  good: 'bg-green-500/10 border-green-500/30 text-green-400',
-};
-
 export default function AnonymitySet({
-  depositCount,
   context,
 }: {
-  depositCount: number;
   context: 'deposit' | 'withdraw';
 }) {
-  const tier = anonymityTier(depositCount);
-
   return (
-    <div className={`rounded-xl border p-4 ${TONE_CLASSES[tier.tone]}`}>
-      <div className="flex justify-between items-baseline mb-1">
-        <span className="text-sm font-medium">Anonymity set</span>
-        <span className="text-sm font-semibold">
-          {depositCount.toLocaleString()} deposit{depositCount === 1 ? '' : 's'}
-        </span>
+    <div className="rounded-xl border border-zinc-700/80 bg-zinc-800/40 p-4">
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-sm font-medium text-zinc-200">Anonymity grows with time</span>
+        <span className="text-[11px] text-zinc-500">privacy tip</span>
       </div>
-      <p className="text-xs leading-relaxed opacity-80">
-        {tier.tone === 'weak' ? (
-          context === 'deposit' ? (
-            <>
-              This pool is {tier.label}, so your withdrawal could be linked to this
-              deposit by elimination. Privacy improves as more people deposit the
-              same amount; consider waiting before withdrawing.
-            </>
-          ) : (
-            <>
-              This pool is {tier.label} ({depositCount} deposits), so an observer
-              has few alternatives to consider. The ZK proof hides which deposit is
-              yours, but not within a crowd this thin.
-            </>
-          )
-        ) : (
-          <>
-            Your withdrawal is indistinguishable from any of these {depositCount}{' '}
-            deposits. The set covers this pool only. Pools from other deployers do
-            not merge.
-          </>
-        )}
+      <p className="text-xs text-zinc-400 leading-relaxed">
+        The longer you wait before withdrawing, the higher your anonymity. Deposits and
+        withdrawals that happen close together can be linked by timing alone, whatever the proof
+        guarantees.
+      </p>
+      <p className="text-xs text-zinc-500 leading-relaxed mt-2">
+        {context === 'deposit'
+          ? 'Plan to leave your funds in the pool for a while, and withdraw from a different network connection if you can.'
+          : 'If you deposited recently, waiting longer will do more for your privacy than anything else on this screen.'}
       </p>
     </div>
   );

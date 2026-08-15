@@ -95,9 +95,10 @@ export default function Withdraw() {
     breakdown !== null && breakdown.relayerFeeMax > FEE_SANITY_LAMPORTS;
 
   // M-1: surface the real anonymity set for the pool this note belongs to.
-  const { info: poolInfo, error: poolError } = usePoolInfo(
-    parsedNote?.poolAddress ?? null
-  );
+  // The pool is still read, but only to validate it: an address from a pasted note could name
+  // any account, and surfacing that early beats failing after a minute of proof generation
+  // (FE-3). The deposit count is deliberately not displayed; see components/AnonymitySet.
+  const { error: poolError } = usePoolInfo(parsedNote?.poolAddress ?? null);
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   // F-3: a stale root is the expected outcome of root-ring griefing — an attacker making
@@ -508,9 +509,7 @@ export default function Withdraw() {
           </div>
         )}
 
-        {poolInfo && (
-          <AnonymitySet depositCount={poolInfo.nextIndex} context="withdraw" />
-        )}
+        <AnonymitySet context="withdraw" />
 
         <PrivacyNotice sameSession={sameSession} />
 

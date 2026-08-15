@@ -118,9 +118,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           </div>
         )}
 
-        {poolInfo && (
-          <AnonymitySet depositCount={poolInfo.nextIndex} context="deposit" />
-        )}
+        <AnonymitySet context="deposit" />
 
         {/* T42: Saturation warning */}
         {poolInfo?.isSaturated && (
