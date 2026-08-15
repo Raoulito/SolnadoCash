@@ -108,6 +108,24 @@ describe('Onboarding gate', () => {
     expect(screen.getByText(/I understand how to use SornadoCash/)).toBeTruthy();
   });
 
+  it('gives the critical sentence its own emphasised line', () => {
+    // This is the one sentence a user cannot afford to skim, so it must be a standalone
+    // element rather than buried mid-paragraph, bolder and larger than the copy around it.
+    // Pinned because emphasis is exactly the kind of thing a later tidy-up quietly removes.
+    renderOnboarding();
+    const line = screen.getByText('This note is the only way to withdraw your funds.');
+    expect(line.tagName).toBe('P');
+    expect(line.className).toMatch(/font-bold/);
+    expect(line.className).toMatch(/text-\[15px\]|text-base/);
+
+    // It names its subject: "It is the only way..." could be read as referring to depositing.
+    expect(line.textContent!.startsWith('This note is')).toBe(true);
+
+    // And it is not merged into the surrounding explanation.
+    expect(screen.getByText(/When you deposit, you get a secret note\.$/)).toBeTruthy();
+    expect(screen.getByText(/Nobody can recover it for you/)).toBeTruthy();
+  });
+
   it('contains no em dashes in any visible text', () => {
     const { container } = renderOnboarding();
     expect(container.textContent).not.toContain('\u2014');

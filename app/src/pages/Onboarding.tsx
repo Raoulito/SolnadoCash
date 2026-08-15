@@ -111,12 +111,20 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
 
         {/* The one thing that actually loses people money */}
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 mb-4">
-          <p className="text-amber-400 text-sm font-medium mb-1">
+          <p className="text-amber-400 text-sm font-medium mb-2">
             Your secret note is everything
           </p>
+          <p className="text-amber-400/70 text-xs leading-relaxed mb-2">
+            When you deposit, you get a secret note.
+          </p>
+          {/* The one sentence a user cannot afford to skim. On its own line, bolder and larger
+              than the surrounding copy, and with an explicit subject: "It" could have been read
+              as referring to depositing rather than to the note. */}
+          <p className="text-amber-300 text-[15px] sm:text-base font-bold leading-snug mb-2">
+            This note is the only way to withdraw your funds.
+          </p>
           <p className="text-amber-400/70 text-xs leading-relaxed">
-            When you deposit, you get a secret note. It is the only way to withdraw your
-            funds. Nobody can recover it for you, so save it before you close the page.
+            Nobody can recover it for you. Save it before you close the page.
           </p>
         </div>
 

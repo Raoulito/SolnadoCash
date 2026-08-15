@@ -41,8 +41,10 @@ export default function NoteDisplay({ note, onDone }: NoteDisplayProps) {
         <p className="text-amber-400 text-sm font-semibold mb-1">
           Save this secret note!
         </p>
+        <p className="text-amber-300 text-[15px] sm:text-base font-bold leading-snug mb-2">
+          This note is the only way to withdraw your funds.
+        </p>
         <p className="text-amber-400/70 text-xs leading-relaxed">
-          This is the <strong>only way</strong> to withdraw your funds.
           If you lose it, your deposit is gone forever. No one can recover it.
         </p>
       </div>
@@ -77,7 +79,7 @@ export default function NoteDisplay({ note, onDone }: NoteDisplayProps) {
           <p className="text-red-400/70 text-xs leading-relaxed">
             Your browser blocked clipboard access. This happens on pages not served over
             HTTPS. Select the note above and copy it manually, or write it down. Do not
-            continue until you have it: it is the only way to withdraw.
+            continue until you have saved it somewhere.
           </p>
         </div>
       )}
