@@ -84,15 +84,15 @@ describe('noteVault', () => {
   });
 
   it('ignores corrupt storage rather than throwing during render', () => {
-    localStorage.setItem('solnadocash_pending_notes_v1', '{not an array');
+    localStorage.setItem('sornadocash_pending_notes_v1', '{not an array');
     expect(pendingNotes()).toEqual([]);
-    localStorage.setItem('solnadocash_pending_notes_v1', '{"a":1}');
+    localStorage.setItem('sornadocash_pending_notes_v1', '{"a":1}');
     expect(pendingNotes()).toEqual([]);
   });
 
   it('drops entries that are not notes', () => {
     localStorage.setItem(
-      'solnadocash_pending_notes_v1',
+      'sornadocash_pending_notes_v1',
       JSON.stringify([{ note: 'not-a-note' }, { note: NOTE, createdAt: 1 }])
     );
     const got = pendingNotes();

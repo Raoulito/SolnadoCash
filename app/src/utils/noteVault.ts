@@ -22,7 +22,35 @@
 // secret touching disk should note that the alternative is not "no secret on disk", it is
 // "no way to recover the deposit".
 
-const KEY = 'solnadocash_pending_notes_v1';
+const KEY = 'sornadocash_pending_notes_v1';
+
+/**
+ * Pre-rebrand key. A staged note is the only way to recover a deposit that may have landed, so
+ * renaming the key without carrying the contents across would silently orphan any note left by
+ * the previous build. Migration runs on first read and then removes the old key.
+ */
+const LEGACY_KEY = 'solnadocash_pending_notes_v1';
+
+function migrateLegacy(): void {
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (!legacy) return;
+    const current = localStorage.getItem(KEY);
+    if (!current || current === '[]') {
+      localStorage.setItem(KEY, legacy);
+    } else {
+      // Both present: keep every note rather than choosing one side.
+      const merged = [...JSON.parse(current), ...JSON.parse(legacy)];
+      const unique = merged.filter(
+        (n, i) => merged.findIndex((m) => m?.note === n?.note) === i
+      );
+      localStorage.setItem(KEY, JSON.stringify(unique));
+    }
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // Never let a migration failure stop the app from reading current notes.
+  }
+}
 
 /**
  * Notified whenever the set of pending notes changes, so the recovery banner reflects
@@ -71,6 +99,7 @@ export interface PendingNote {
 
 function readAll(): PendingNote[] {
   try {
+    migrateLegacy();
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);

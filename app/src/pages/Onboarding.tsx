@@ -64,28 +64,28 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
       aria-modal="true"
       aria-labelledby="onboarding-title"
     >
-      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 my-8">
+      <div className="w-full max-w-lg card p-5 sm:p-7 my-6 animate-rise">
         {/* Header */}
-        <div className="text-center mb-8">
-          <span className="text-4xl mb-3 block">🌀</span>
-          <h2 id="onboarding-title" className="text-2xl font-bold mb-2">
+        <div className="text-center mb-5">
+          <span className="grid place-items-center w-14 h-14 mx-auto mb-3 rounded-2xl bg-zinc-800/80 border border-white/10 text-2xl shadow-xl shadow-cyan-950/30">🌀</span>
+          <h2 id="onboarding-title" className="text-xl sm:text-2xl font-bold mb-2 tracking-tight">
             On Solana, everything is public
           </h2>
           <p className="text-zinc-400 text-sm leading-relaxed">
             Every transaction you make is visible to everyone, forever.
             <br />
-            SolnadoCash breaks the on-chain link between sender and receiver.
+            SornadoCash breaks the on-chain link between sender and receiver.
           </p>
         </div>
 
         {/* Examples */}
-        <div className="space-y-3 mb-8">
+        <div className="space-y-2 mb-5">
           {examples.map((ex) => (
             <div
               key={ex.title}
-              className="flex gap-4 p-4 bg-zinc-800/50 rounded-xl"
+              className="flex gap-3 p-3 bg-zinc-800/40 rounded-xl ring-1 ring-white/[0.05]"
             >
-              <span className="text-2xl shrink-0 mt-0.5">{ex.icon}</span>
+              <span className="text-xl shrink-0 mt-0.5">{ex.icon}</span>
               <div>
                 <h3 className="font-semibold text-sm mb-1">{ex.title}</h3>
                 <p className="text-zinc-400 text-xs leading-relaxed">
@@ -97,8 +97,8 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
         </div>
 
         {/* How it works (ultra-simple) */}
-        <div className="text-center mb-6">
-          <p className="text-zinc-500 text-xs mb-3">How SolnadoCash works:</p>
+        <div className="text-center mb-4">
+          <p className="text-zinc-500 text-xs mb-3">How SornadoCash works:</p>
           <div className="flex items-center justify-center gap-2 text-sm">
             <span className="bg-zinc-800 px-3 py-1.5 rounded-lg">Deposit</span>
             <span className="text-zinc-600">→</span>
@@ -110,7 +110,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
         </div>
 
         {/* The one thing that actually loses people money */}
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-5">
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 mb-4">
           <p className="text-amber-400 text-sm font-medium mb-1">
             Your secret note is everything
           </p>
@@ -121,7 +121,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
         </div>
 
         {/* Acknowledgement */}
-        <label className="flex items-start gap-3 cursor-pointer group mb-5">
+        <label className="flex items-start gap-3 cursor-pointer group mb-4">
           <input
             type="checkbox"
             checked={acknowledged}
@@ -129,7 +129,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
             className="mt-0.5 w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-cyan-500 focus:ring-cyan-500/30 shrink-0"
           />
           <span className="text-zinc-300 text-sm leading-relaxed group-hover:text-zinc-100 transition-colors">
-            I understand how to use SolnadoCash
+            I understand how to use SornadoCash
           </span>
         </label>
 
@@ -139,9 +139,7 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
           disabled={!canContinue}
           aria-describedby="onboarding-gate-hint"
           className={`w-full py-3.5 rounded-xl font-semibold transition-colors text-sm ${
-            canContinue
-              ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-              : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+            canContinue ? 'btn-primary' : 'btn-muted'
           }`}
         >
           {countdownDone ? 'Get Started' : `Please read (${secondsLeft}s)`}

@@ -3,8 +3,171 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    @apply bg-zinc-950;
+  }
+
   body {
-    @apply bg-zinc-950 text-zinc-100 antialiased;
+    @apply text-zinc-100 antialiased;
+    background: transparent;
+    /* Locally available faces only. The app previously pulled DM Sans from Google, which
+       leaked every visitor's IP to a third party on page load: unacceptable for a privacy
+       tool, so the font is now a system stack and there are no font requests at all. */
+    font-family:
+      'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' 32;
+  }
+
+  /* Amounts must not jitter as digits change. */
+  .tnum,
+  input,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Keyboard focus was entirely invisible before. */
+  :focus-visible {
+    outline: 2px solid rgb(34 211 238 / 0.75);
+    outline-offset: 2px;
+    border-radius: 0.6rem;
+  }
+
+  ::selection {
+    background: rgb(34 211 238 / 0.28);
+    color: rgb(244 244 245);
+  }
+
+  /* A faint aurora behind everything, to give the flat panels something to sit on.
+     Fixed and non-interactive, so it never affects layout or hit-testing. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: -20%;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(42rem 28rem at 16% -8%, rgb(34 211 238 / 0.20), transparent 64%),
+      radial-gradient(38rem 26rem at 86% 2%, rgb(139 92 246 / 0.20), transparent 64%),
+      radial-gradient(34rem 24rem at 50% 106%, rgb(34 211 238 / 0.12), transparent 62%);
+    animation: aurora-drift 24s ease-in-out infinite alternate;
+  }
+
+  /* Hairline grid, barely there, to stop large dark areas reading as dead space. */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.6;
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.03) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(70rem 50rem at 50% 0%, black, transparent 75%);
+    -webkit-mask-image: radial-gradient(70rem 50rem at 50% 0%, black, transparent 75%);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(63 63 70 / 0.8);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(82 82 91 / 0.9);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Panel surface: slight translucency over the aurora, hairline top highlight. */
+  .card {
+    @apply relative bg-zinc-900/70 backdrop-blur-xl rounded-2xl border border-white/[0.07];
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.04) inset,
+      0 20px 45px -20px rgb(0 0 0 / 0.8);
+  }
+
+  .btn-primary {
+    @apply text-white font-semibold rounded-xl transition-all;
+    background-image: linear-gradient(135deg, rgb(34 211 238), rgb(8 145 178));
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.18) inset,
+      0 10px 24px -12px rgb(34 211 238 / 0.55);
+  }
+  .btn-primary:hover {
+    background-image: linear-gradient(135deg, rgb(103 232 249), rgb(6 182 212));
+  }
+  .btn-primary:active {
+    transform: translateY(1px) scale(0.995);
+  }
+
+  .btn-muted {
+    @apply font-semibold rounded-xl bg-zinc-800/70 text-zinc-500 cursor-not-allowed;
+  }
+
+  /* Brand wordmark. */
+  .brand-text {
+    background-image: linear-gradient(100deg, rgb(165 243 252), rgb(34 211 238) 45%, rgb(167 139 250));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .spinner {
+    @apply inline-block rounded-full border-2 border-cyan-400/25 border-t-cyan-300;
+    animation: spin 0.7s linear infinite;
+  }
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(1.5%, 1.5%, 0) scale(1.06);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.28s ease-out both;
+}
+
+/* Anyone who has asked the OS to stop animations gets none of the above. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
 
@@ -14,6 +177,12 @@
   font-weight: 500 !important;
   font-size: 0.875rem !important;
   height: 2.75rem !important;
+  background-image: linear-gradient(135deg, rgb(39 39 42), rgb(24 24 27)) !important;
+  border: 1px solid rgb(255 255 255 / 0.08) !important;
+}
+
+.wallet-adapter-button:not([disabled]):hover {
+  background-image: linear-gradient(135deg, rgb(63 63 70), rgb(39 39 42)) !important;
 }
 
 .wallet-adapter-modal-wrapper {

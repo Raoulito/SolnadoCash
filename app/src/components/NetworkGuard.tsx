@@ -26,7 +26,7 @@ const GENESIS_HASHES: Record<string, string> = {
   testnet: '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY',
 };
 
-const REMINDER_DISMISSED_KEY = 'solnadocash_network_reminder_dismissed';
+const REMINDER_DISMISSED_KEY = 'sornadocash_network_reminder_dismissed';
 
 export default function NetworkGuard() {
   const { connected } = useWallet();

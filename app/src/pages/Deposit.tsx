@@ -161,8 +161,8 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           disabled={!canContinue}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
             canContinue
-              ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-              : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+              ? 'btn-primary'
+              : 'btn-muted'
           }`}
         >
           Continue
@@ -338,7 +338,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <button
           onClick={handleDeposit}
-          className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
+          className="w-full py-3.5 btn-primary text-sm"
         >
           Deposit {pool!.denominationSol} SOL
         </button>
@@ -350,7 +350,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   if (step === 'processing') {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <div className="animate-spin text-cyan-400 text-3xl mb-4">&#9696;</div>
+        <div className="spinner w-9 h-9 mb-4" role="status" aria-label="Processing" />
         <p className="text-zinc-300 text-sm font-medium">Processing deposit...</p>
         <p className="text-zinc-500 text-xs mt-2">Waiting for confirmation</p>
       </div>
@@ -449,7 +449,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <button
           onClick={onGoToWithdraw}
-          className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
+          className="w-full py-3.5 btn-primary text-sm"
         >
           Go to Withdraw
         </button>

@@ -56,9 +56,7 @@ export default function ProgressIndicator({
               {isComplete && (
                 <span className="text-green-400">&#10003;</span>
               )}
-              {isActive && (
-                <span className="text-cyan-400 animate-spin inline-block">&#9696;</span>
-              )}
+              {isActive && <span className="spinner w-4 h-4" aria-label="in progress" />}
               {isFailed && (
                 <span className="text-red-400">&#10007;</span>
               )}

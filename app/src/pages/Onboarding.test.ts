@@ -105,7 +105,7 @@ describe('Onboarding gate', () => {
   it('states the thing that actually loses people money', () => {
     renderOnboarding();
     expect(screen.getByText(/only way to withdraw your funds/i)).toBeTruthy();
-    expect(screen.getByText(/I understand how to use SolnadoCash/)).toBeTruthy();
+    expect(screen.getByText(/I understand how to use SornadoCash/)).toBeTruthy();
   });
 
   it('contains no em dashes in any visible text', () => {

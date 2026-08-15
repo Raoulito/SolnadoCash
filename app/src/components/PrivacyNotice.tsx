@@ -1,6 +1,6 @@
 import { RELAYER_URL, relayerTransportIsInsecure } from '../config';
 
-export const DEPOSIT_SESSION_KEY = 'solnadocash_deposited_this_session';
+export const DEPOSIT_SESSION_KEY = 'sornadocash_deposited_this_session';
 
 /** Record that a deposit was made in this browser session (H-6). */
 export function markDepositedThisSession(): void {

@@ -294,8 +294,8 @@ export default function Withdraw() {
           disabled={!noteInput.trim()}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
             noteInput.trim()
-              ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-              : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+              ? 'btn-primary'
+              : 'btn-muted'
           }`}
         >
           Continue
@@ -398,8 +398,8 @@ export default function Withdraw() {
           disabled={!recipient.trim() || quoteLoading}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
             recipient.trim() && !quoteLoading
-              ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-              : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+              ? 'btn-primary'
+              : 'btn-muted'
           }`}
         >
           {quoteLoading ? 'Getting fee quote…' : 'Continue'}
@@ -445,7 +445,7 @@ export default function Withdraw() {
         <div className="bg-zinc-800/50 rounded-xl p-5 space-y-3">
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Amount</span>
-            <span className="text-zinc-100 font-semibold">
+            <span className="text-zinc-100 font-semibold tnum">
               {parsedNote?.denominationSol} SOL
             </span>
           </div>
@@ -516,7 +516,7 @@ export default function Withdraw() {
 
         <button
           onClick={() => executeWithdraw(0)}
-          className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl transition-colors text-sm"
+          className="w-full py-3.5 btn-primary text-sm"
         >
           Withdraw
         </button>
@@ -569,7 +569,7 @@ export default function Withdraw() {
 
             <button
               onClick={() => executeWithdraw(0)}
-              className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-xl transition-colors text-sm"
+              className="w-full py-3 btn-primary text-sm"
             >
               Retry withdrawal
             </button>

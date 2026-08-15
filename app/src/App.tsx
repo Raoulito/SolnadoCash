@@ -9,7 +9,7 @@ import NoteRecovery from './components/NoteRecovery';
 
 type Tab = 'deposit' | 'withdraw';
 
-const ONBOARDING_KEY = 'solnadocash_onboarded';
+const ONBOARDING_KEY = 'sornadocash_onboarded';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('deposit');
@@ -68,9 +68,15 @@ export default function App() {
 
       {/* Header */}
       <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-zinc-800/50">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🌀</span>
-          <h1 className="text-lg font-bold tracking-tight">SolnadoCash</h1>
+        <div className="flex items-center gap-2.5">
+          <span className="relative grid place-items-center w-9 h-9 rounded-xl bg-zinc-900 border border-white/10 text-lg shadow-lg shadow-cyan-950/30">
+            <span aria-hidden="true">🌀</span>
+            <span className="absolute inset-0 rounded-xl bg-cyan-400/10 blur-md" aria-hidden="true" />
+          </span>
+          <div className="leading-none">
+            <h1 className="text-lg font-bold tracking-tight brand-text">SornadoCash</h1>
+            <p className="text-[10px] text-zinc-500 mt-0.5 tracking-wide">sornado.cash</p>
+          </div>
         </div>
         <WalletMultiButton />
       </header>
@@ -78,18 +84,44 @@ export default function App() {
       {/* Main */}
       <main className="flex-1 flex items-start justify-center px-4 pt-8 sm:pt-16 pb-8">
         <div className="w-full max-w-md">
+          {/* Hero. The landing state is otherwise a single small card on a large empty page,
+              and the one thing worth saying up front is what the protocol does and does not
+              hide. */}
+          <div className="text-center mb-6">
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
+              Break the <span className="brand-text">on-chain link</span>
+            </h2>
+            <p className="text-zinc-400 text-sm mt-2 leading-relaxed">
+              Deposit a fixed amount, get a secret note, withdraw to any address.
+            </p>
+            <div className="flex items-center justify-center gap-4 mt-4 text-[11px] text-zinc-500">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1 h-1 rounded-full bg-cyan-400/80" aria-hidden="true" />
+                Groth16 proofs
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1 h-1 rounded-full bg-violet-400/80" aria-hidden="true" />
+                Proof runs in your browser
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1 h-1 rounded-full bg-cyan-400/80" aria-hidden="true" />
+                Open relayer
+              </span>
+            </div>
+          </div>
+
           {/* Tabs */}
-          <div className="flex bg-zinc-900 rounded-xl p-1 mb-4">
+          <div className="flex bg-zinc-900/70 backdrop-blur border border-white/[0.06] rounded-xl p-1 mb-4">
             {(['deposit', 'withdraw'] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => handleTabClick(t)}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors capitalize ${
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all capitalize ${
                   tab === t
-                    ? 'bg-zinc-800 text-zinc-100 shadow-sm'
+                    ? 'bg-gradient-to-b from-zinc-700/80 to-zinc-800 text-zinc-50 shadow-lg shadow-black/40 border border-white/[0.06]'
                     : noteLocked
                       ? 'text-zinc-700 cursor-not-allowed'
-                      : 'text-zinc-500 hover:text-zinc-300'
+                      : 'text-zinc-500 hover:text-zinc-200'
                 }`}
               >
                 {t}
@@ -111,7 +143,7 @@ export default function App() {
           )}
 
           {/* Card */}
-          <div className="bg-zinc-900 rounded-2xl border border-zinc-800/50 p-6">
+          <div className="card p-6 animate-rise">
             {tab === 'deposit' ? (
               <Deposit
                 onGoToWithdraw={() => setTab('withdraw')}
@@ -124,7 +156,14 @@ export default function App() {
 
           {/* Footer */}
           <p className="text-center text-zinc-600 text-xs mt-6">
-            {NETWORK} · v0.1.0
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/70" aria-hidden="true" />
+              {NETWORK}
+            </span>
+            <span className="mx-2 text-zinc-800">|</span>
+            sornado.cash
+            <span className="mx-2 text-zinc-800">|</span>
+            v0.1.0
           </p>
         </div>
       </main>

@@ -41,15 +41,15 @@ export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) 
               onClick={() => onSelect(pool)}
               disabled={undeployed}
               title={undeployed ? 'Not deployed on this network' : `${pool.denominationSol} SOL`}
-              className={`py-3 rounded-xl text-center font-semibold transition-all ${
+              className={`relative py-3.5 rounded-xl text-center font-semibold transition-all ${
                 isSelected
-                  ? 'bg-cyan-600/20 border-2 border-cyan-500 text-cyan-400'
+                  ? 'bg-cyan-500/15 ring-2 ring-cyan-400/80 text-cyan-200 shadow-lg shadow-cyan-950/40 -translate-y-0.5'
                   : undeployed
-                    ? 'bg-zinc-900 border-2 border-transparent text-zinc-700 cursor-not-allowed'
-                    : 'bg-zinc-800 border-2 border-transparent text-zinc-300 hover:border-zinc-600'
+                    ? 'bg-zinc-900/60 ring-1 ring-white/5 text-zinc-700 cursor-not-allowed'
+                    : 'bg-zinc-800/70 ring-1 ring-white/[0.06] text-zinc-300 hover:ring-zinc-500/60 hover:bg-zinc-800 hover:-translate-y-0.5'
               }`}
             >
-              <span className="block text-lg leading-tight">{short(pool.denominationSol)}</span>
+              <span className="block text-lg leading-tight tnum">{short(pool.denominationSol)}</span>
               <span className="block text-[10px] text-zinc-500 mt-0.5">SOL</span>
             </button>
           );
