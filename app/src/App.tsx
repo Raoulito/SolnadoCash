@@ -4,10 +4,11 @@ import { NETWORK, fatalConfigProblems } from './config';
 import Onboarding from './pages/Onboarding';
 import Deposit from './pages/Deposit';
 import Withdraw from './pages/Withdraw';
+import Faq from './pages/Faq';
 import NetworkGuard from './components/NetworkGuard';
 import NoteRecovery from './components/NoteRecovery';
 
-type Tab = 'deposit' | 'withdraw';
+type Tab = 'deposit' | 'withdraw' | 'faq';
 
 const ONBOARDING_KEY = 'sornadocash_onboarded';
 
@@ -87,6 +88,9 @@ export default function App() {
           {/* Hero. The landing state is otherwise a single small card on a large empty page,
               and the one thing worth saying up front is what the protocol does and does not
               hide. */}
+          {/* Hidden on the FAQ tab: that page opens with "Why would I want this?", so the hero
+              only repeats it and pushes the answer below the fold. */}
+          {tab !== 'faq' && (
           <div className="text-center mb-6">
             <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
               Break the <span className="brand-text">on-chain link</span>
@@ -112,14 +116,17 @@ export default function App() {
               </span>
             </div>
           </div>
+          )}
 
           {/* Tabs */}
           <div className="flex bg-zinc-900/70 backdrop-blur border border-white/[0.06] rounded-xl p-1 mb-4">
-            {(['deposit', 'withdraw'] as Tab[]).map((t) => (
+            {(['deposit', 'withdraw', 'faq'] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => handleTabClick(t)}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all capitalize ${
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  t === 'faq' ? 'uppercase tracking-wide' : 'capitalize'
+                } ${
                   tab === t
                     ? 'bg-gradient-to-b from-zinc-700/80 to-zinc-800 text-zinc-50 shadow-lg shadow-black/40 border border-white/[0.06]'
                     : noteLocked
@@ -152,8 +159,10 @@ export default function App() {
                 onGoToWithdraw={() => setTab('withdraw')}
                 onNoteLock={handleNoteLock}
               />
-            ) : (
+            ) : tab === 'withdraw' ? (
               <Withdraw />
+            ) : (
+              <Faq onGoToDeposit={() => setTab('deposit')} />
             )}
           </div>
 
