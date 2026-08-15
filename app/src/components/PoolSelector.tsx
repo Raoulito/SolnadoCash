@@ -19,7 +19,7 @@ function short(sol: number): string {
  *
  * Pools are keyed by `address` rather than `label`: labels are display strings and two rungs
  * could in principle share one, whereas the pool PDA is unique by construction. The grid is
- * sized for the current three rungs; widen the column count if the ladder grows.
+ * sized for the current four rungs; widen the column count if the ladder grows.
  */
 export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) {
   return (
@@ -31,7 +31,7 @@ export default function PoolSelector({ selected, onSelect }: PoolSelectorProps) 
         Each amount is a separate pool with its own anonymity set. Larger amounts usually have
         fewer deposits, so they hide you less.
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {POOLS.map((pool) => {
           const isSelected = selected?.address === pool.address;
           const undeployed = !pool.address;

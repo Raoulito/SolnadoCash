@@ -8,7 +8,7 @@ Built on Groth16 zero-knowledge proofs (BN254), Poseidon hashing, and stealth ad
 
 ## How It Works
 
-1. **Deposit** — User picks a denomination (0.1, 1 or 10 SOL) and deposits exactly that amount into the matching pool, receiving a secret note
+1. **Deposit** - User picks a denomination (0.1, 1, 10 or 100 SOL) and deposits exactly that amount into the matching pool, receiving a secret note
 2. **Wait** — The deposit sits in a pool alongside all other deposits of the same denomination
 3. **Withdraw** — User (or a relayer on their behalf) submits a ZK proof that they know a valid note, without revealing *which* deposit it corresponds to
 4. **Receive** — Funds arrive at any destination address with zero on-chain link to the original depositor
@@ -171,7 +171,8 @@ For a 1 SOL pool:
 
 ## Denominations
 
-Three fixed rungs: **0.1, 1 and 10 SOL**. Deposits must equal a rung exactly — arbitrary amounts
+Four fixed rungs: **0.1, 1, 10 and 100 SOL** — powers of ten, which is the ladder Tornado Cash
+shipped for ETH and the only one with real usage data behind it. Deposits must equal a rung exactly — arbitrary amounts
 are what make a mixer trivially de-anonymisable, since an unusual amount identifies itself on the
 way out.
 
@@ -179,8 +180,8 @@ The ladder is deliberately narrow, and that is the opposite of a feature gap.
 
 **Every rung is a separate anonymity set, and sets never merge.** Each rung added divides the
 same liquidity further. A rung only begins to hide anyone once it holds roughly 50 deposits, so
-the number of useful rungs is bounded by volume, at about `total deposits / 50`. At current
-volume that is two or three. Thirteen rungs would mean thirteen sets of nearly nothing.
+the number of useful rungs is bounded by volume, at about `total deposits / 50`. Thirteen rungs,
+which was briefly deployed and withdrawn, would mean thirteen sets of nearly nothing.
 
 **A wide ladder also makes users more identifiable, not less.** Moving 437 SOL across rungs of
 250+100+50+20+10+5+2 produces a distinctive multiset of denominations, and that combination is
@@ -202,10 +203,10 @@ Planned growth, in order, each gated on the neighbouring rungs being deep:
 
 | Next | Trigger |
 |------|---------|
-| 100 SOL | the 10 SOL pool passes ~100 deposits, or repeated 10x batching is observed |
 | 0.3 / 3 / 30 SOL | each neighbour passes ~100 deposits (3 is the geometric mid-decade, so it halves worst-case splitting for the fewest new sets) |
+| 1000 SOL | only with sustained demand at 100 SOL. At roughly $76k a deposit, that rung will not fill, and an advertised rung that cannot fill is worse than an absent one |
 
-Devnet also carries 0.5, 2, 3, 5, 20, 50, 100, 250, 500 and 1000 SOL pools from an earlier
+Devnet also carries 0.5, 2, 3, 5, 20, 50, 250, 500 and 1000 SOL pools from an earlier
 wide-ladder deployment. They are intentionally unadvertised. There is no close instruction, by
 design, so an unwanted pool can only be abandoned, never removed — which is why the ladder width
 must be settled before mainnet.
@@ -217,13 +218,13 @@ The on-chain cap is proportional (`denomination / 50`) while a relayer's real co
 
 | Rung | 2% cap | Real cost | Cap ÷ cost |
 |------|--------|-----------|------------|
-| 0.1 SOL | 0.002 | ~0.003 | **0.65x — the cap is below cost** |
+| 0.1 SOL | 0.002 | ~0.003 | **0.65x, the cap is below cost** |
 | 1 SOL | 0.02 | ~0.003 | 6.5x |
 | 10 SOL | 0.2 | ~0.003 | 65x |
-| 1000 SOL | 20 | ~0.003 | 6,452x |
+| 100 SOL | 2 | ~0.003 | 645x |
 
 On the 0.1 SOL rung the cap sits below a relayer's cost, so relayers subsidise those withdrawals.
-Far up the ladder it bounds almost nothing. The withdraw screen therefore warns on the
+On the 100 SOL rung it permits a 2 SOL fee for work costing 0.003, so it bounds almost nothing. The withdraw screen therefore warns on the
 **absolute** fee rather than the percentage, because "2.00%" looks identical and harmless at every
 denomination. A cap of the shape `max(floor, min(denomination/50, ceiling))` is still owed, since
 relayer cost is denomination-independent and the cap mostly should not scale.
@@ -413,7 +414,7 @@ user with a cold cache still pays O(deposits), and public RPC endpoints rate-lim
 history. An indexer is required before a pool holds many thousands of deposits.
 
 **Anonymity sets are small and split per denomination.** Sets never merge across rungs, so the
-three-rung ladder is a deliberate attempt to concentrate what liquidity exists rather than a
+four-rung ladder is a deliberate attempt to concentrate what liquidity exists rather than a
 missing feature. Even so, on a young deployment a rung may hold a handful of deposits, and a
 withdrawal from a pool with one deposit is fully linkable regardless of the ZK proof. The
 protocol cannot fix this, only depositors can. The UI does not display the per-pool deposit

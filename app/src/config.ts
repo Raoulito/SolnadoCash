@@ -111,21 +111,25 @@ function loadPools(): PoolConfig[] {
       );
     }
   }
-  // Devnet deployments. THREE rungs on purpose.
+  // Devnet deployments. FOUR rungs: 0.1, 1, 10, 100.
   //
   // Each pool is an independent anonymity set and sets never merge, so every rung added
   // divides the same liquidity further. A rung only starts hiding anyone once it holds
   // roughly 50+ deposits, which caps the useful number of rungs at about
-  // (total deposits / 50) — two or three at current volume. A wide ladder also makes users
+  // (total deposits / 50). A wide ladder also makes users
   // MORE identifiable, because an unusual combination of denominations is itself a
   // fingerprint across the deposit/withdraw boundary, whereas repeats of a common rung are
   // not. Tornado Cash shipped four ETH rungs for the same reason.
   //
-  // Staged growth, in order, each gated on the neighbouring rungs being deep:
-  //   +100 SOL   when the 10 SOL pool passes ~100 deposits or 10x batching is observed
-  //   +0.3/3/30  when each neighbour passes ~100 deposits (3 is the geometric mid-decade)
+  // Powers of ten, which is the ladder Tornado Cash shipped for ETH and the only one with
+  // real usage data behind it. 100 SOL is roughly $7.6k at the time of writing: a normal
+  // amount to want private, unlike the 250/500/1000 rungs that were tried and withdrawn.
   //
-  // Pools for 0.5, 2, 3, 5, 20, 50, 100, 250, 500 and 1000 SOL exist on devnet from an
+  // Next, gated on the neighbouring rungs being deep:
+  //   +0.3/3/30  when each neighbour passes ~100 deposits (3 is the geometric mid-decade)
+  //   +1000      only with sustained demand at 100; a $76k deposit will not fill a pool
+  //
+  // Pools for 0.5, 2, 3, 5, 20, 50, 250, 500 and 1000 SOL exist on devnet from an
   // earlier wide-ladder deployment and are deliberately NOT listed: there is no close
   // instruction, so they cannot be removed, only left unadvertised. Do not advertise a rung
   // that cannot be filled — someone will use it and believe they are private.
@@ -147,6 +151,12 @@ function loadPools(): PoolConfig[] {
       denominationSol: 10,
       denominationLamports: 10_000_000_000n,
       address: '8WAo38JwTXFQ2hUgXs6Bh3sH6SepqLxYr5fVuaCVcTme',
+    },
+    {
+      label: '100 SOL',
+      denominationSol: 100,
+      denominationLamports: 100_000_000_000n,
+      address: 'FNKSaFFyTSV2gSwgGyRGSGYPaS7tC9EBithKrWnQBAoN',
     },
   ];
 }

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { POOLS } from './config';
 
-const EXPECTED_LADDER = [0.1, 1, 10];
+const EXPECTED_LADDER = [0.1, 1, 10, 100];
 
 describe('denomination ladder', () => {
   it('has every rung, in ascending order', () => {
