@@ -72,28 +72,18 @@ export default function PrivacyNotice({
 
       <details className="bg-zinc-800/30 rounded-xl p-4">
         <summary className="text-zinc-400 text-xs cursor-pointer select-none">
-          Who can see this withdrawal?
+          How to keep this withdrawal private
         </summary>
         <div className="text-zinc-500 text-xs leading-relaxed mt-3 space-y-2">
           <p>
-            <strong className="text-zinc-400">On-chain:</strong> there is no link
-            between your deposit and this withdrawal. That is what the ZK proof
-            guarantees.
+            <strong className="text-zinc-400">On-chain:</strong> there is no link between your
+            deposit and this withdrawal. That is what the ZK proof guarantees.
           </p>
           <p>
-            <strong className="text-zinc-400">The relayer ({relayerHost}):</strong>{' '}
-            receives your recipient address and nullifier along with your IP
-            address. It cannot take your funds or change the recipient, but it can
-            log who asked for what.
-          </p>
-          <p>
-            <strong className="text-zinc-400">Your RPC provider:</strong> sees the
-            same IP for your deposit and your withdrawal requests.
-          </p>
-          <p>
-            To reduce both: wait before withdrawing, use a different network path
-            than the one you deposited from, and prefer a relayer you trust or run
-            your own.
+            <strong className="text-zinc-400">Off-chain:</strong> your IP address is not covered
+            by the proof. Withdraw over a VPN or Tor, from a different network than the one you
+            deposited from, and ideally from a different device. Otherwise the two requests share
+            an IP address, and that is enough to connect them without breaking any cryptography.
           </p>
         </div>
       </details>

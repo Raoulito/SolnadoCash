@@ -94,6 +94,9 @@ export default function App() {
             <p className="text-zinc-400 text-sm mt-2 leading-relaxed">
               Deposit a fixed amount, get a secret note, withdraw to any address.
             </p>
+            <p className="text-base font-semibold mt-3 brand-text">
+              Own your financial privacy
+            </p>
             <div className="flex items-center justify-center gap-4 mt-4 text-[11px] text-zinc-500">
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-1 h-1 rounded-full bg-cyan-400/80" aria-hidden="true" />
