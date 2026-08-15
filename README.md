@@ -447,6 +447,7 @@ rather than reassured:
 | Front-end pass | 10 findings, including one that could permanently lose a deposit |
 | Re-review | 2 findings, **both in code written hours earlier** |
 | Focused circuit/Merkle review | No code bugs; one test-coverage hole that hid silent breakage |
+| Live front-end pentest | 3 real findings: no CSP anywhere, third-party font requests leaking user IPs to Google, and 133 prod-dependency advisories from a wallet meta-package |
 
 Every round found something new, including rounds that examined freshly written code, and
 several fixes introduced fresh defects. The find rate has never reached zero, which is the best
@@ -465,6 +466,20 @@ Not established by any of that: the soundness of `groth16-solana`, Solana's Pose
 syscalls, `snarkjs`, or `circomlib`. This code is verified to be *consistent with* those
 dependencies, not to be safe if one of them is flawed — and a flaw there would leave every test
 here green.
+
+The front-end attack harnesses are committed and re-runnable: `app/security/hostile_relayer.mjs`
+is a malicious relayer with 16 modes (fee escalation between quote and execution, fees above the
+on-chain cap, lying about what the user receives, identity swaps, prototype pollution, non-JSON
+bodies, success without a signature, XSS through the transaction signature, and hanging), and
+`app/security/browser_attack.mjs` runs 12 attacks in headless Chromium including note
+exfiltration by fetch and by image beacon, poisoned localStorage, and CSP integrity.
+
+```bash
+node app/security/hostile_relayer.mjs 3999          # hostile relayer
+cd app && npx vitest run src/security               # drive real app code against it
+VITE_RELAYER_URL=http://localhost:3999 npm run build && npx vite preview --port 4173
+node security/browser_attack.mjs http://127.0.0.1:4173
+```
 
 If you are a security researcher, issues and responsible disclosures are welcome.
 
