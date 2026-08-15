@@ -19,6 +19,7 @@ import {
   priorityFeeLamports,
   BASE_FEE,
   getNullifierRent,
+  planFee,
 } from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
@@ -261,13 +262,36 @@ export function createApp({ connection, relayerKeypair, programId }) {
       // ceiling the user agreed to (H-3): relayerFeeMax exists to absorb fee
       // movement between quote and submission, not to be claimed in full.
       const feeMax = BigInt(relayerFeeMax || (await computeRelayerFeeMax(connection)));
-      const priorityFeePerCU = await getPriorityFeePerCU(connection);
-      const realCost = BigInt(
-        BASE_FEE +
-          priorityFeeLamports(priorityFeePerCU) +
-          (await getNullifierRent(connection))
-      );
-      const actualFee = realCost < feeMax ? realCost : feeMax;
+      const estimatedPriorityPerCU = await getPriorityFeePerCU(connection);
+      const rent = await getNullifierRent(connection);
+
+      // planFee caps the priority fee by what the ceiling can actually reimburse. Clamping only
+      // the CHARGE while still attaching the full estimate meant the relayer silently paid the
+      // difference, with no bound, every time congestion rose between quote and submission.
+      const { appliedPriorityPerCU, actualFee, degraded, shortfall, subsidy } = planFee({
+        feeMax,
+        rent,
+        estimatedPriorityPerCU,
+      });
+      const priorityFeePerCU = appliedPriorityPerCU;
+
+      if (degraded) {
+        // Worth surfacing: the withdrawal still lands, but more slowly, and a persistent stream of
+        // these means quotes are being outrun by congestion and the margin needs revisiting.
+        console.warn(
+          `[relayer] priority fee capped by the agreed ceiling: wanted ` +
+            `${estimatedPriorityPerCU} uL/CU, applying ${appliedPriorityPerCU} uL/CU ` +
+            `(${shortfall} lamports short). Inclusion may be slower.`
+        );
+      }
+      if (subsidy > 0) {
+        // Structural, not congestion-driven: the denomination's 2% cap does not cover the
+        // deterministic cost. Bounded and known per withdrawal, but the operator should see it.
+        console.warn(
+          `[relayer] subsidising ${subsidy} lamports on this withdrawal: the agreed ceiling ` +
+            `does not cover signature fee plus nullifier rent for this denomination.`
+        );
+      }
 
       // T29 — Check relayer balance before submitting
       const balance = await connection.getBalance(relayerKeypair.publicKey);

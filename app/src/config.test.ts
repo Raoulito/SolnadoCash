@@ -30,6 +30,11 @@ describe('denomination ladder', () => {
     // initialize_pool rejects a denomination whose worst-case payout falls below
     // Rent::minimum_balance(0) (~890,880 lamports), because a fresh recipient account must be
     // left rent-exempt.
+    // Mirrors the runtime 0-byte rent-exemption minimum. The PROGRAM never hardcodes this: it
+    // reads Rent::get()?.minimum_balance(0) at pool creation. This constant exists only so a unit
+    // test can run without a network, and scripts/devnet_verify.js checks the live value against
+    // the cluster. If Solana ever changes it, this test is the wrong place to find out; the devnet
+    // check reports the change explicitly.
     const RENT_MIN = 890_880n;
     for (const p of POOLS) {
       const worstCase =

@@ -21,6 +21,12 @@ fn fee_split(denomination: u64, relayer_fee_taken: u64, relayer_fee_max: u64) ->
 
 /// Rent-exempt minimum for a 0-byte account, measured on a validator: transferring
 /// 890_879 to a fresh address is rejected, 890_880 succeeds.
+///
+/// This mirrors a RUNTIME parameter that Solana can change, so it is only a reference point for the
+/// properties below. The program never uses a constant: initialize_pool reads the live value via
+/// `Rent::get()?.minimum_balance(0)`. Where a property only needs "some threshold", it is
+/// parameterised over the threshold rather than tied to this number, so the property keeps holding
+/// if the parameter moves.
 const RENT_MIN_BALANCE_0: u64 = 890_880;
 
 /// Mirrors initialize_pool's acceptance rule, using the shared helper it calls.

@@ -948,16 +948,24 @@ async function verifyM3(program, provider, fx) {
 async function verifyN3(program, provider) {
   console.log("\n── N-3: denomination floor (deposits must stay withdrawable) ──");
 
+  // Read the floor from the cluster instead of asserting a literal. The 0-byte rent-exemption
+  // minimum is a runtime parameter and Solana can change it; asserting 890,880 would turn a
+  // legitimate protocol upgrade into a confusing test failure, and would quietly stop testing the
+  // real threshold. The program itself already reads it via Rent::get(), so the check that matters
+  // is that the program's behaviour tracks the cluster, not that the number equals a constant.
   const minRent = await provider.connection.getMinimumBalanceForRentExemption(0);
   record(
     "N-3",
-    "runtime rent floor for a fresh 0-byte account",
-    minRent === 890880,
-    `${minRent} lamports`
+    "runtime rent floor for a fresh 0-byte account is readable and sane",
+    Number.isInteger(minRent) && minRent > 0 && minRent < 100_000_000,
+    `${minRent} lamports${minRent === 890880 ? " (the long-standing value)" : " (CHANGED from 890,880 — review the denomination ladder)"}`
   );
 
-  // A pool above the old 500-lamport limit but below the real floor must be refused.
-  const tooLow = new anchor.BN(900_000);
+  // A denomination whose worst-case payout lands just BELOW the live floor must be refused. Derived
+  // from minRent so this keeps testing the real boundary if the parameter ever moves.
+  // worst_case = d - d/500 - d/50, so d must satisfy d * 0.978 < minRent.
+  const justBelow = Math.floor(minRent / 0.978) - 1_000;
+  const tooLow = new anchor.BN(justBelow);
   const [badPool] = findPoolPda(
     provider.wallet.publicKey,
     tooLow,

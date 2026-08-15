@@ -88,6 +88,74 @@ export async function getNullifierRent(connection) {
 }
 
 /**
+ * Convert a lamport budget for priority fees back into micro-lamports per compute unit.
+ *
+ * Inverse of `priorityFeeLamports`, rounded DOWN so the resulting per-CU price can never spend
+ * more than the budget allows.
+ *
+ * @param {number} lamports
+ * @returns {number} micro-lamports per compute unit
+ */
+export function priorityPerCUFromLamports(lamports) {
+  if (lamports <= 0) return 0;
+  return Math.floor((lamports * MICRO_LAMPORTS_PER_LAMPORT) / COMPUTE_UNITS);
+}
+
+/**
+ * Decide what the relayer will actually spend and charge for one withdrawal.
+ *
+ * The problem this solves. `relayer_fee_max` is frozen into the ZK proof when the user requests a
+ * quote, but the transaction is submitted 30 to 90 seconds later, after proof generation. If
+ * network congestion rises in between, the priority fee needed to land the transaction can exceed
+ * what the ceiling reimburses. Previously the relayer clamped what it CHARGED to the ceiling while
+ * still attaching the full estimated priority fee, so it paid the difference out of pocket with no
+ * bound. Sustained congestion, or an attacker deliberately inducing it, would bleed the relayer to
+ * insolvency; and an insolvent relayer is worse than a slow one, because users are then pushed into
+ * self-relaying, which destroys the privacy they came for.
+ *
+ * So the priority fee is capped by what the ceiling can actually pay for, after the two
+ * deterministic costs (signature fee and nullifier rent) are covered. Under congestion the relayer
+ * degrades to a lower priority fee and slower inclusion instead of to a loss, and what it charges
+ * always equals what it spends.
+ *
+ * @param {object} p
+ * @param {bigint} p.feeMax - ceiling bound into the proof
+ * @param {number} p.rent - nullifier rent, read from the chain
+ * @param {number} p.estimatedPriorityPerCU - current p90 estimate, micro-lamports per CU
+ * @returns {{ appliedPriorityPerCU: number, actualFee: bigint, degraded: boolean, shortfall: number }}
+ */
+export function planFee({ feeMax, rent, estimatedPriorityPerCU }) {
+  const deterministic = BASE_FEE + rent;
+  const budgetForPriority = Number(feeMax) - deterministic;
+
+  const wantedLamports = priorityFeeLamports(estimatedPriorityPerCU);
+  const affordableLamports = Math.max(0, budgetForPriority);
+  const appliedLamports = Math.min(wantedLamports, affordableLamports);
+
+  // Round-trip through per-CU so the charge matches what setComputeUnitPrice will really cost.
+  const appliedPriorityPerCU = priorityPerCUFromLamports(appliedLamports);
+  const spentOnPriority = priorityFeeLamports(appliedPriorityPerCU);
+
+  // The charge is still clamped to the ceiling. On the smallest rungs the 2% cap sits BELOW the
+  // deterministic cost, and the project's deliberate policy (N-1) is that relayers subsidise those
+  // withdrawals rather than refuse them, since refusing pushes the user into self-relaying and
+  // costs them their privacy. Capping the priority component above turns that subsidy into a
+  // BOUNDED one: at most max(0, deterministic - feeMax) per withdrawal, a known constant, instead
+  // of an unbounded amount that congestion decides.
+  const spent = deterministic + spentOnPriority;
+  const charged = BigInt(spent) < feeMax ? BigInt(spent) : feeMax;
+
+  return {
+    appliedPriorityPerCU,
+    actualFee: charged,
+    degraded: wantedLamports > affordableLamports,
+    shortfall: Math.max(0, wantedLamports - affordableLamports),
+    // What the relayer cannot recover. Zero in normal operation.
+    subsidy: Math.max(0, spent - Number(charged)),
+  };
+}
+
+/**
  * The relayer's real cost to submit one withdrawal, in lamports.
  * No margin — this is what an honest relayer should actually take.
  *
