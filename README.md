@@ -218,16 +218,30 @@ The on-chain cap is proportional (`denomination / 50`) while a relayer's real co
 
 | Rung | 2% cap | Real cost | Cap ÷ cost |
 |------|--------|-----------|------------|
-| 0.1 SOL | 0.002 | ~0.003 | **0.65x, the cap is below cost** |
-| 1 SOL | 0.02 | ~0.003 | 6.5x |
-| 10 SOL | 0.2 | ~0.003 | 65x |
-| 100 SOL | 2 | ~0.003 | 645x |
+| 0.1 SOL | 0.002 | 0.0014527 | 1.38x |
+| 1 SOL | 0.02 | 0.0014527 | 13.8x |
+| 10 SOL | 0.2 | 0.0014527 | 137x |
+| 100 SOL | 2 | 0.0014527 | 1,376x |
 
-On the 0.1 SOL rung the cap sits below a relayer's cost, so relayers subsidise those withdrawals.
-On the 100 SOL rung it permits a 2 SOL fee for work costing 0.003, so it bounds almost nothing. The withdraw screen therefore warns on the
+Real cost is `signature fee + nullifier rent` = 5,000 + 1,447,680 = 1,452,680 lamports, plus any
+priority fee. It is dominated by rent, which is flat, so it does not scale with the denomination.
+Confirmed against a live devnet withdrawal: the relayer took exactly 1,452,680 lamports and its net
+balance change was 0.
+
+Every rung currently clears cost, including 0.1 SOL. An earlier version of this table claimed the
+0.1 SOL cap sat *below* cost, which was true against the pre-M-6 rent figure of 2,039,280 lamports
+(the rent for a 165-byte SPL token account, not the 80-byte account this program creates). Fixing
+the rent made that rung profitable and the claim was not updated. A relayer breaks even while
+`denomination / 50 >= 5,000 + rent`, so the minimum viable denomination today is 0.0727 SOL, and
+0.1 SOL tolerates about a 38% rent increase before it would need subsidising. On the 100 SOL rung
+the cap permits a 2 SOL fee for work costing 0.0015, so it bounds almost nothing. The withdraw screen therefore warns on the
 **absolute** fee rather than the percentage, because "2.00%" looks identical and harmless at every
 denomination. A cap of the shape `max(floor, min(denomination/50, ceiling))` is still owed, since
 relayer cost is denomination-independent and the cap mostly should not scale.
+
+Run `node scripts/simulate_economics.js` to reproduce these figures. It drives the shipped fee code
+across four denominations and six congestion regimes, and reports protocol solvency, operator P&L,
+worst-case user payout, break-even volume and sensitivity to the rent parameter.
 
 ## Architecture
 
