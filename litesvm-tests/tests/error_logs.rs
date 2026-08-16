@@ -7,9 +7,13 @@
 //! build would report a single useless line number for every error in the program and nothing
 //! would fail.
 //!
+//! Stripping is ON by default (see Cargo.toml), so the DEFAULT expectation here is a stripped log.
+//! That has to match the default build or `cargo test` fails for everyone who did not read this
+//! comment, which is how it failed the first time.
+//!
 //! Run:
-//!   anchor build                                        && cargo test --release --test error_logs
-//!   cargo build-sbf -- --features strip-error-origins   && EXPECT_STRIPPED=1 cargo test --release --test error_logs
+//!   anchor build                                  && cargo test --release --test error_logs
+//!   cargo build-sbf -- --no-default-features      && EXPECT_ORIGINS=1 cargo test --release --test error_logs
 
 use litesvm::LiteSVM;
 use solana_sdk::{
@@ -61,7 +65,8 @@ fn failing_logs() -> Vec<String> {
 fn error_logs_match_the_build_variant() {
     let logs = failing_logs();
     let joined = logs.join("\n");
-    let stripped = std::env::var("EXPECT_STRIPPED").is_ok();
+    // Default: stripped, matching `default = ["strip-error-origins"]`.
+    let stripped = std::env::var("EXPECT_ORIGINS").is_err();
 
     // The error itself must be reported either way: the code and message are what callers and the
     // relayer's error mapping depend on, and the feature is only about the source location.

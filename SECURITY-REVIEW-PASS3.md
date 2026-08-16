@@ -242,3 +242,76 @@ A duplicate is only reachable by reusing your own note or by copying someone els
 commitment, and copying it burns the copier's own SOL while granting nothing: the secret is
 still unknown, so only the original owner can withdraw, once. The cost is not proportionate
 to the harm; client-side detection stays.
+
+
+---
+
+## Findings from live use (not from any audit pass)
+
+Three bugs surfaced during a real devnet session, after four review passes and a front-end pentest
+had all reported clean. Recorded together because they share a cause worth naming: each was invisible
+to the test suite for a reason specific to the harness rather than to the code.
+
+### L-1 — Merkle rebuild recovered 0 of N deposits (withdraw path dead)
+
+`Number(data.leafIndex)` on an Anchor event whose field is `leaf_index`. The result is NaN, and
+because `Map` uses SameValueZero, NaN matches itself as a key: every deposit collapsed onto one
+entry, the dense-prefix scan starting at 0 found nothing, and the tree came out empty. The error
+reported to the user blamed the RPC endpoint for missing history.
+
+The typo predated the H-5 caching work and was harmless there, because `leafIndex` was used only for
+a sort and NaN comparators make a sort a no-op while chronological order already came from
+`getSignaturesForAddress`. Making `leafIndex` load-bearing as a map key converted a dormant bug into
+total failure of the withdraw path.
+
+**Why no test caught it:** the mock EventParser emitted `leafIndex`, the one spelling the real parser
+never produces. Twelve tests passed against a dialect that does not exist. Fixed by reading
+`leaf_index` with a fallback, making an unusable index a hard error rather than a silent NaN, and
+correcting the mock. Mutation-validated.
+
+### L-2 — Withdrawals impossible when the relayer is also the treasury
+
+The lamport-conservation check asserted each payee's balance rose by exactly its own share. Two payee
+slots may legitimately be the same account, and then they share one lamport cell that receives both
+credits, so the treasury assertion failed even though the ledger balanced to the lamport. Reported as
+`FeeInvariantViolated`, which reads as a protocol bug.
+
+This is the DEFAULT configuration for a solo operator relaying their own withdrawals, and it was
+completely broken. Now each account is checked against the total owed to its key. The guard is not
+weakened: aliasing that would actually move value incorrectly (vault, nullifier PDA) is still
+rejected unconditionally and earlier.
+
+**Why no test caught it:** every fixture used distinct keys for treasury and relayer. The sequence
+fuzzer generates adversarial *sequences* but not adversarial *account topology*, and that is the gap.
+
+### L-3 — Congestion could bleed the relayer without bound
+
+`relayer_fee_max` is frozen into the proof at quote time; submission happens 30 to 90 seconds later.
+The relayer clamped what it CHARGED to the ceiling while still attaching the FULL estimated priority
+fee, so every congestion spike in that window was paid out of pocket with no cap. That is an economic
+denial of service rather than an accounting oddity: an insolvent relayer forces users to self-relay
+and lose the privacy they came for.
+
+Fixed by capping the attached priority fee at what the ceiling reimburses, so congestion degrades
+inclusion speed rather than the relayer's balance. The small-denomination subsidy is preserved but
+bounded to a known constant instead of an amount congestion decides.
+
+**Why no test caught it:** no test simulated a quote-to-submission gap, and the property is economic
+rather than functional. Nothing crashes when a relayer loses money.
+
+### Correction to an earlier finding
+
+The fee-cap analysis claimed the 0.1 SOL rung's 2% cap sits below a relayer's cost, so relayers
+subsidise it. That was true against the pre-M-6 rent figure of 2,039,280 lamports, the rent for a
+165-byte SPL token account rather than the 80-byte account this program creates. M-6 corrected the
+rent and made the rung profitable at a 1.38x margin; the prose was not updated. Confirmed against a
+live withdrawal where the relayer took exactly 1,452,680 lamports for a net change of 0. No rung on
+the current ladder subsidises, so the bounded-subsidy path in L-3 is defensive rather than active.
+
+### What this says about the review process
+
+Four passes found nothing here. Real use found three in one session, two of which made a core path
+completely unusable. The common thread is that the harness diverged from production in a way the
+harness itself could not detect: a mocked field name, a fixture's account layout, an economic
+property with no test. Reviewing code more times would not have found any of them. Running it would,
+and did.

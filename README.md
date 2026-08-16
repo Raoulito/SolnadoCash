@@ -4,6 +4,11 @@ Privacy protocol for Solana. Deposit SOL into a shared pool, withdraw to any add
 
 Built on Groth16 zero-knowledge proofs (BN254), Poseidon hashing, and stealth addresses. Inspired by Tornado Cash, rebuilt from scratch for Solana's architecture.
 
+> **Rebrand in progress.** The front end now ships as **SornadoCash** (sornado.cash); the on-chain
+> program, the Rust crate, the npm packages and this repository are still named SolnadoCash. Renaming
+> those touches a deployed program ID and published package names, so it is a deliberate separate
+> step. The note format prefix stays `sndo_` under either name, so existing notes remain valid.
+
 ---
 
 ## How It Works
@@ -91,18 +96,63 @@ SOL transfers use **direct lamport mutation**, not `system_program::transfer` (w
 **relayer.try_borrow_mut_lamports()? += relayer_fee;
 ```
 
+### Error logs
+
+On-chain errors report the code and number but not a source location:
+
+```
+Program log: AnchorError occurred. Error Code: NullifierAlreadySpent. Error Number: 6004.
+```
+
+Anchor's `require!` normally attaches the filename and line, which anyone can read from a
+transaction simulation. A `guard!` macro replaces every `require!` and the `strip-error-origins`
+feature, which is **on by default**, removes the origin. It is in `default` rather than opt-in
+deliberately: if it were opt-in, one forgotten flag on a future `anchor build && solana program
+deploy` would silently put the paths back and nothing would warn you. The stripped binary is also
+about 4,700 bytes smaller.
+
+The error *number* is in the transaction result either way, so this hides nothing an attacker could
+not derive from public source. To get file and line back while debugging:
+
+```bash
+cargo build-sbf -- --no-default-features
+```
+
+### Events
+
+`deposit` emits `DepositEvent { leaf, leaf_index, timestamp }`, which the client needs to rebuild
+the Merkle tree.
+
+`withdraw` emits `WithdrawalEvent { nullifier_hash, relayer, relayer_fee, treasury_fee }`. It
+deliberately does **not** include the recipient. That address is already in the transaction's
+account list, so omitting it discloses nothing new in a strict sense, but there is a real difference
+between "derivable by parsing every transaction" and "handed over pre-parsed in an event stream",
+and bulk deposit/withdrawal correlation is exactly what this protocol exists to prevent.
+
 ### Measured Performance
 
 | Instruction | Compute Units | Notes |
 |-------------|---------------|-------|
-| `initialize_pool` | 15,655 | Pool + vault PDA creation, incl. the rent-derived denomination floor |
-| `deposit` | 27,455 | Canonical-field check + 20-level Poseidon Merkle insert + SOL transfer |
-| `withdraw` | 101,300 – 103,310 | Canonical-input guards + Groth16 verify + commitment check + nullifier PDA + fee split + conservation and distinctness checks |
-| **Safety margin** | **~93% headroom** | Single-transaction withdrawal, no splitting needed |
+| `initialize_pool` | ~17,000 to 20,000 | Pool + vault PDA creation, incl. the rent-derived denomination floor |
+| `deposit` | ~26,000 to 32,000 | Canonical-field check + 20-level Poseidon Merkle insert + SOL transfer |
+| `withdraw` | ~102,000 to 108,000 | Canonical-input guards + Groth16 verify + commitment check + nullifier PDA + fee split + conservation and distinctness checks |
+| `pause_pool` | 1,336 | Stable across every run |
+| **Budget** | **150,000** | What to set, against Solana's 1.4M limit |
 
-Measured on a local validator by `tests/withdraw.ts`. The withdraw figure rose from 99,713 during the security fixes: +2 Poseidon hashes for the collision-resistant pubkey encoding, plus the canonical-input, lamport-conservation and nullifier-PDA distinctness guards. `deposit` rose from 25,955 when the canonical-field check was added to the deposit path.
+These are ranges rather than figures, and the reason is worth stating because an earlier version of
+this table published single numbers to the lamport. Three consecutive runs of the *identical*
+binary, on a fresh local validator each time, gave `withdraw` 101,908 then 104,908 then 107,908,
+while `pause_pool` stayed at exactly 1,336 in all three. So the spread is not the code changing.
+`tests/withdraw.ts` measures by simulating a transaction that contains a `ComputeBudget`
+instruction plus the instruction under test and reading `unitsConsumed` for the whole transaction,
+so the number includes per-transaction overhead; whatever varies affects the larger instructions and
+leaves the trivial one alone. Until that is isolated, treat these as indicative of headroom and not
+as a regression signal: a 2,000 CU change here is noise, and the honest conclusion is that
+withdrawal fits comfortably in a single transaction with roughly an order of magnitude to spare.
 
-Withdraw is quoted as a range because the root-history scan returns on match, so the cost depends on where the proof's root sits in the 256-entry ring — a root near the end of the buffer costs ~2,000 CU more than one near the start. Worst case is a full 256-entry scan, which the range above does not reach; budget for ~110,000 CU rather than the observed minimum.
+`withdraw` additionally varies with where the proof's root sits in the 256-entry ring, because the
+history scan returns on match. A root near the end of the buffer costs about 2,000 CU more than one
+near the start, and the worst case is a full 256-entry scan.
 
 ## Decentralization
 
@@ -122,6 +172,12 @@ Anyone can run a relayer. The relayer's role is to submit the withdrawal transac
 - **Client-side validation** — the SDK's `validateFeeQuote` recomputes every figure locally from the denomination, rejects quotes above the cap before a proof is generated, and rejects a relayer whose advertised "you receive" figure contradicts its own fee ceiling.
 - **Explicit consent** — the withdraw UI shows the maximum fee and the guaranteed minimum received *before* the ceiling is bound into the proof.
 - **Honest reference relayer** — it charges its measured cost (base fee + priority fee + nullifier rent), not the ceiling, and attaches the priority fee it bills for.
+- **Congestion cannot bleed the relayer** — the ceiling is frozen into the proof at quote time, but
+  the transaction lands 30 to 90 seconds later, after proof generation. If congestion rises in
+  between, the relayer caps the priority fee it attaches at what the ceiling reimburses, so it
+  degrades to slower inclusion rather than paying the difference out of pocket. Charging the ceiling
+  while attaching the full estimate was an unbounded loss and therefore an economic denial of
+  service: an insolvent relayer forces users to self-relay, which destroys their privacy.
 
 > **Not implemented:** there is no relayer reputation or ranking system. An earlier version of this document claimed the SDK published each relayer's historical `fee_taken / fee_max` ratio and ranked relayers accordingly — no such code exists. Relayer choice is currently manual, and a relayer may claim up to the 2% cap. Treat relayer selection as trusted-but-bounded.
 
@@ -373,6 +429,13 @@ cd app && npm test && npm run lint
 # Monitor
 cd monitor && npm test
 
+# Front-end attack suite (needs the hostile relayer running)
+node app/security/hostile_relayer.mjs 3999 &
+cd app && npm run test:security
+
+# Economic simulation: protocol solvency, operator P&L, user payout, rent sensitivity
+node scripts/simulate_economics.js
+
 # Fast in-process on-chain tests, including the sequence fuzzer
 cd litesvm-tests && cargo test --release
 
@@ -469,6 +532,7 @@ rather than reassured:
 | Re-review | 2 findings, **both in code written hours earlier** |
 | Focused circuit/Merkle review | No code bugs; one test-coverage hole that hid silent breakage |
 | Live front-end pentest | 3 real findings: no CSP anywhere, third-party font requests leaking user IPs to Google, and 133 prod-dependency advisories from a wallet meta-package |
+| **Live devnet use** | **3 real bugs after all of the above reported clean**, two of which made a core path completely unusable: a snake_case event field read as camelCase silently emptied the Merkle tree, withdrawals were impossible whenever the relayer was also the treasury, and congestion could drain the relayer without bound. Each was invisible to the suite because the harness diverged from production, not because the code was unreviewed. See SECURITY-REVIEW-PASS3.md. |
 
 Every round found something new, including rounds that examined freshly written code, and
 several fixes introduced fresh defects. The find rate has never reached zero, which is the best
@@ -477,9 +541,9 @@ not "no bugs".
 
 What the tests do and do not establish. Verified: 42 Rust unit and property tests (including a
 differential test of the incremental Merkle insert against an independent recomputation, and a
-cross-language root vector pinned against the SDK), 10 in-process on-chain tests including a
+cross-language root vector pinned against the SDK), 12 in-process on-chain tests including a
 sequence fuzzer that has run 24,000+ steps against 7 invariants and 12 attack moves, 39/39
-live devnet checks, plus SDK, relayer, app and monitor suites. `circomspect` reports no issues
+live devnet checks, 96 SDK, 52 relayer, 88 front-end and 25 monitor tests. `circomspect` reports no issues
 above INFO on any circuit, and `snarkjs r1cs info` confirms the withdraw circuit's interface
 exactly: 3 public inputs, 0 outputs, 46 private inputs.
 
