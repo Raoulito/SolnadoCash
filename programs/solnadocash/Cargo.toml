@@ -9,10 +9,16 @@ crate-type = ["cdylib", "lib"]
 name = "solnadocash"
 
 [features]
-# Remove the source filename and line from on-chain error logs. OFF by default: the code is
-# public and the error number is in the transaction result regardless, so stripping hides nothing
-# an attacker could not derive, while the file:line is what lets you locate a failure from a
-# user's transaction. Enable for a deployment that would rather not publish the mapping.
+# Remove the source filename and line from on-chain error logs.
+#
+# ON by default, and in `default` rather than opt-in on purpose. If stripping were opt-in, one
+# forgotten flag on any future `anchor build && solana program deploy` would silently put the
+# paths back, and nothing would fail to warn you. This way the default build is the one that is
+# safe to deploy, and the failure mode of forgetting the flag is only that local debugging is
+# harder.
+#
+# To get the file and line back while developing:
+#   cargo build-sbf -- --no-default-features
 strip-error-origins = []
 
 no-entrypoint = []
@@ -22,7 +28,7 @@ anchor-debug = []
 no-idl = []
 no-log-ix-name = []
 cpi = ["no-entrypoint"]
-default = []
+default = ["strip-error-origins"]
 # Enable to run CU benchmarks (T11, T12)
 benchmark = []
 idl-build = ["anchor-lang/idl-build"]
