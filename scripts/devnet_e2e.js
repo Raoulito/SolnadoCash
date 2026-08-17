@@ -38,8 +38,14 @@ const BN254_Fq =
   21888242871839275222246405745257275088696311157297823662689037894645226208583n;
 
 // Realistic relayer fee: covers nullifier rent + base fee + 50% margin
-const RELAYER_FEE_MAX = 3_066_420n;
-const RELAYER_FEE_TAKEN = 3_066_420n;
+// Clamped to the on-chain cap (denomination/50) so this works at any rung. Hardcoding 3,066,420
+// was fine at 1 SOL and exceeded 2% of 0.1 SOL, failing with RelayerFeeMaxTooHigh (6024).
+// The real relayer's cost floor is signature fee + nullifier rent = 1,452,680 lamports, so a
+// denomination whose 2% cap is below that cannot pay its own way: see scripts/simulate_economics.js.
+const _FEE_CEILING = DENOMINATION_BI / 50n;
+const _FEE_WANTED = 3_066_420n;
+const RELAYER_FEE_MAX = _FEE_WANTED < _FEE_CEILING ? _FEE_WANTED : _FEE_CEILING;
+const RELAYER_FEE_TAKEN = RELAYER_FEE_MAX;
 const TREASURY_FEE = DENOMINATION_BI / 500n; // 200_000 lamports
 
 const BUILD_DIR = path.join(__dirname, "../circuits/build");
@@ -214,16 +220,33 @@ async function main() {
   const funderBal = await connection.getBalance(funder.publicKey);
   console.log("Fee payer balance:", funderBal / LAMPORTS_PER_SOL, "SOL\n");
 
-  if (funderBal < 0.3 * LAMPORTS_PER_SOL) {
-    console.error("ERROR: Need at least 0.3 SOL in fee payer wallet");
+  // Scales with the denomination, like the funding below. A flat 0.3 SOL was right for the 1 SOL
+  // case and wrongly blocked a 0.1 SOL run that only needed ~0.19.
+  const required = Number(DENOMINATION_BI) + 120_000_000;
+  if (funderBal < required) {
+    console.error(
+      `ERROR: need at least ${(required / LAMPORTS_PER_SOL).toFixed(3)} SOL in the fee payer ` +
+        `for a ${Number(DENOMINATION_BI) / LAMPORTS_PER_SOL} SOL denomination, have ` +
+        `${(funderBal / LAMPORTS_PER_SOL).toFixed(4)}`
+    );
     process.exit(1);
   }
 
   // ── Step 1: Generate keypairs ────────────────────────────────────────────
 
   console.log("Step 1 — Generating fresh keypairs...");
-  const admin = Keypair.generate();
-  const treasury = Keypair.generate();
+  // ADMIN_KEYPAIR / TREASURY let this run against an ALREADY DEPLOYED pool instead of a throwaway
+  // one. Needed to prove a real pool's treasury actually receives the fee, which is the failure
+  // D-1 was: four pool versions shipped with discarded ephemeral treasuries and the fee was
+  // unrecoverable. Verifying the pool's stored treasury is not the same as watching lamports land.
+  const admin = process.env.ADMIN_KEYPAIR
+    ? Keypair.fromSecretKey(
+        Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ADMIN_KEYPAIR, "utf8")))
+      )
+    : Keypair.generate();
+  let treasury = process.env.TREASURY
+    ? { publicKey: new PublicKey(process.env.TREASURY) }
+    : Keypair.generate();
 
   // Any 32-byte pubkey works: pubkey_to_field is collision-resistant (H-2).
   const recipient = Keypair.generate();
@@ -238,7 +261,12 @@ async function main() {
 
   console.log("\nStep 2 — Funding admin and relayer from fee payer...");
 
-  const fundAdminAmount = 1_100_000_000; // 1.1 SOL (1 SOL deposit + pool rent + buffer)
+  // Scales with the denomination. This was hardcoded at 1.1 SOL for the 1 SOL case, which made
+  // DENOMINATION_LAMPORTS unusable for anything else: a 0.1 SOL run still demanded 1.1 SOL and
+  // failed with a bare system-program error 0x1.
+  // Covers the deposit itself, pool + vault rent if the pool must be created, and transaction fees.
+  const POOL_RENT = 64_310_400; // pool 8,976 B + vault 8 B
+  const fundAdminAmount = Number(DENOMINATION_BI) + POOL_RENT + 20_000_000;
   const fundRelayerAmount = 5_000_000; // 0.005 SOL
   const fundTreasuryAmount = 1_000_000; // 0.001 SOL — treasury must be rent-exempt before receiving fees
 
@@ -274,18 +302,35 @@ async function main() {
   console.log("  Pool PDA: ", poolPda.toBase58());
   console.log("  Vault PDA:", vaultPda.toBase58());
 
-  const initSig = await program.methods
-    .initializePool(DENOMINATION, VERSION)
-    .accountsPartial({
-      admin: admin.publicKey,
-      pool: poolPda,
-      vault: vaultPda,
-      treasury: treasury.publicKey,
-      systemProgram: SystemProgram.programId,
-    })
-    .signers([admin])
-    .rpc();
-  console.log("  Init tx:  ", initSig);
+  // Reuse the pool if it is already deployed, so this can run against a real one. The treasury is
+  // immutable, so when reusing, the pool's STORED treasury is authoritative and the TREASURY env
+  // var is only a cross-check: silently paying a different address than the caller expected is
+  // exactly the D-1 failure.
+  const existing = await provider.connection.getAccountInfo(poolPda);
+  if (existing) {
+    const storedTreasury = new PublicKey(existing.data.subarray(8 + 88, 8 + 120));
+    console.log("  Pool already exists, reusing it.");
+    console.log("  Treasury (on-chain):", storedTreasury.toBase58());
+    if (process.env.TREASURY && storedTreasury.toBase58() !== process.env.TREASURY) {
+      throw new Error(
+        `pool treasury ${storedTreasury.toBase58()} does not match TREASURY=${process.env.TREASURY}`
+      );
+    }
+    treasury = { publicKey: storedTreasury };
+  } else {
+    const initSig = await program.methods
+      .initializePool(DENOMINATION, VERSION)
+      .accountsPartial({
+        admin: admin.publicKey,
+        pool: poolPda,
+        vault: vaultPda,
+        treasury: treasury.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([admin])
+      .rpc();
+    console.log("  Init tx:  ", initSig);
+  }
 
   // ── Step 4: Generate note + deposit ──────────────────────────────────────
 

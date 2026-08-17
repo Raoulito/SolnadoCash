@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // scripts/deploy_pools.js
 // Deploy SolnadoCash privacy pools on devnet.
-// Uses the local wallet (~/.config/solana/id.json) as admin and treasury.
+// Admin comes from ANCHOR_WALLET and the treasury from the TREASURY env var. For the role-key
+// deployment both are explicit:
+//   ANCHOR_WALLET=.keypairs/PooL....json TREASURY=TREAANHx... node scripts/deploy_pools.js
+// The admin is part of the pool PDA seeds, so changing it produces different pool addresses.
 //
 // Usage:
 //   ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
