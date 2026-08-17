@@ -238,8 +238,22 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           if (isWalletRejection(sendErr)) {
             clearNote(note.encoded);
             setSecretNote('');
+            throw sendErr;
           }
-          throw sendErr;
+          // Ambiguous failure. sendTransaction both signs AND submits, so the deposit may well
+          // have landed: wallets throw "Unexpected error" for their own internal reasons after the
+          // transaction is already on the network. Observed live, with the deposit confirmed
+          // on-chain while the UI showed an error.
+          //
+          // Showing an error and hiding the note is the wrong response to "probably succeeded".
+          // Treat it exactly like a confirmation timeout: show the note, say the outcome is
+          // unknown, and tell the user to check before depositing again. The note is already
+          // persisted, so nothing is at risk either way.
+          markNoteStatus(note.encoded, 'sent');
+          setConfirmUnknown(true);
+          markDepositedThisSession();
+          setStep('note');
+          return;
         }
         markNoteStatus(note.encoded, 'sent', sig);
         setTxSig(sig);
@@ -322,9 +336,8 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
         <div className="bg-zinc-800/30 rounded-xl p-4">
           <p className="text-zinc-500 text-xs leading-relaxed">
-            Your deposit goes into a shared pool. You'll receive a secret note.
-            paste it later to withdraw to <strong>any</strong> address, with no
-            link to this wallet.
+            Your deposit goes into a shared pool. You'll receive a secret note. Paste it
+            later to withdraw to <strong>any</strong> address, with no link to this wallet.
           </p>
         </div>
 
@@ -388,11 +401,13 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
               We could not confirm the transaction
             </p>
             <p className="text-amber-400/70 text-xs leading-relaxed">
-              The deposit was broadcast but the network did not confirm it in time. It has
-              probably succeeded. Save the note below either way, then check the transaction
-              link: if it succeeded the note is your only way to withdraw, and if it failed
-              the note is simply unusable. Do not deposit again until you have checked, or
-              you may deposit twice.
+              The deposit was broadcast but not confirmed back to this page. It has probably
+              succeeded. Save the note below either way: if the deposit went through, the note is
+              your only way to withdraw, and if it did not, the note is simply unusable.
+              {txSig
+                ? ' Check the transaction link above before depositing again.'
+                : ' Your wallet did not return a transaction id, so check your wallet history or the pool before depositing again.'}{' '}
+              Depositing again without checking may deposit twice.
             </p>
           </div>
         )}

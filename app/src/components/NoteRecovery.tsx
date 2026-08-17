@@ -11,12 +11,14 @@
 // withdrawn — so the wording never asserts that funds exist, it tells the user how to check.
 
 import { useEffect, useState } from 'react';
+import { useConnection } from '@solana/wallet-adapter-react';
 import {
   clearNote,
   onPendingNotesChanged,
   pendingNotes,
   type PendingNote,
 } from '../utils/noteVault';
+import { reconcilePendingNotes } from '../utils/noteReconcile';
 import { explorerTxUrl } from '../config';
 
 export default function NoteRecovery() {
@@ -24,9 +26,30 @@ export default function NoteRecovery() {
   const [copied, setCopied] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
 
+  const { connection } = useConnection();
+
   // Track storage rather than a mount-time snapshot: a note stranded mid-session must appear
   // without a reload, because the deposit error message tells the user to look here.
   useEffect(() => onPendingNotesChanged(() => setNotes(pendingNotes())), []);
+
+  // Ask the chain which of these notes are actually worth keeping. A note whose deposit never
+  // landed cannot withdraw anything, and showing it only invites a withdrawal attempt that fails
+  // with a confusing message about missing deposit history. Notes that did land are marked
+  // confirmed; anything undecidable is left exactly as it was.
+  useEffect(() => {
+    let cancelled = false;
+    reconcilePendingNotes(connection)
+      .then(() => {
+        if (!cancelled) setNotes(pendingNotes());
+      })
+      .catch(() => {
+        // Reconciliation is an optimisation, never a gate. If it fails the banner still shows
+        // every note, which is the safe direction.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connection]);
 
   if (notes.length === 0) return null;
 
