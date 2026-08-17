@@ -59,3 +59,8 @@ scripts/verify_devnet.*
 litesvm-tests/target/
 monitor/state.json
 monitor/node_modules/
+
+# Private keys. NEVER commit these: the remote is public.
+.keypairs/
+*.keypair.json
+id.json
