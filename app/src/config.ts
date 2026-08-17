@@ -113,6 +113,11 @@ function loadPools(): PoolConfig[] {
   }
   // Devnet deployments. FOUR rungs: 0.1, 1, 10, 100.
   //
+  // These pools were created with the mainnet role keys as a rehearsal: admin PooLKrrU...,
+  // treasury TREAANHx.... The admin is part of the pool PDA seeds, so a different admin yields
+  // different addresses; the earlier pools (admin 4PLXgVX9...) still exist on devnet and are
+  // deliberately unadvertised.
+  //
   // Each pool is an independent anonymity set and sets never merge, so every rung added
   // divides the same liquidity further. A rung only starts hiding anyone once it holds
   // roughly 50+ deposits, which caps the useful number of rungs at about
@@ -138,25 +143,25 @@ function loadPools(): PoolConfig[] {
       label: '0.1 SOL',
       denominationSol: 0.1,
       denominationLamports: 100_000_000n,
-      address: '8SQqZoyaH8w8GPqBkW556Kyi5hY7YoTmwMSMA4wFuW6X',
+      address: 'FWQkYzmNz74VSffemu9tphYX1TSSfTBo9JYgKRWRWcoY',
     },
     {
       label: '1 SOL',
       denominationSol: 1,
       denominationLamports: 1_000_000_000n,
-      address: 'Dg7qsi5Xjsh3k6vTBrXTHnsL4iEq4eMUbEzYNMDWaexY',
+      address: '2MgQTtJGed9eR9itPk9nUChYbvCTpfmNhKTxpnUA2S3d',
     },
     {
       label: '10 SOL',
       denominationSol: 10,
       denominationLamports: 10_000_000_000n,
-      address: '8WAo38JwTXFQ2hUgXs6Bh3sH6SepqLxYr5fVuaCVcTme',
+      address: 'GhbShsZipzgpRxZSihAkn1Bmstzoq9CgpDrbGXz3bNFE',
     },
     {
       label: '100 SOL',
       denominationSol: 100,
       denominationLamports: 100_000_000_000n,
-      address: 'FNKSaFFyTSV2gSwgGyRGSGYPaS7tC9EBithKrWnQBAoN',
+      address: 'F5Qkfpw57KCXB8uXam1p3wAkf5YazSURPJWb1WVqfs7n',
     },
   ];
 }
