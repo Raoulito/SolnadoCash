@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { PublicKey } from '@solana/web3.js';
@@ -11,6 +11,14 @@ import { getProgram, buildDepositTx } from '../utils/program';
 import { markDepositedThisSession } from '../components/PrivacyNotice';
 import { stageNote, markNoteStatus, clearNote } from '../utils/noteVault';
 import { explorerTxUrl, type PoolConfig } from '../config';
+import { assertClusterAllowed, ClusterBlockedError } from '../utils/clusterGate';
+import { useClusterGate } from '../hooks/useClusterGate';
+import {
+  assertWalletCanDeposit,
+  checkWalletCanDeposit,
+  WalletNotOnClusterError,
+} from '../utils/walletCluster';
+import WrongNetworkModal from '../components/WrongNetworkModal';
 
 type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
 
@@ -38,6 +46,15 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   const { connected, publicKey, sendTransaction } = useWallet();
   const anchorWallet = useAnchorWallet();
   const { connection } = useConnection();
+  // Interface state only. The enforcement is assertClusterAllowed inside handleDeposit.
+  const clusterState = useClusterGate();
+
+  // Whether the connected wallet can actually pay on this cluster. The wallet's selected network is
+  // not readable (see utils/walletCluster.ts), so this asks the answerable question instead: does
+  // this address hold enough on the cluster we are about to transact on? A wallet switched to
+  // mainnet has no devnet balance, which is the case this catches.
+  const [walletBlock, setWalletBlock] = useState<string | null>(null);
+  const [walletChecking, setWalletChecking] = useState(false);
 
   const [step, setStep] = useState<Step>('select');
   const [pool, setPool] = useState<PoolConfig | null>(null);
@@ -53,6 +70,37 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   useEffect(() => {
     onNoteLock(step === 'note');
   }, [step, onNoteLock]);
+
+  // Can this wallet actually pay on the cluster we are about to transact on?
+  //
+  // This is the answerable form of "is the wallet on devnet". The selected network of a wallet is
+  // not exposed to a dApp by any current API (checked: WalletContextState, the Adapter interface,
+  // Wallet Standard `chains`, Phantom's provider), so instead of guessing, this reads the balance
+  // of the connected address through the app's own devnet connection. A wallet switched to mainnet
+  // has never been airdropped devnet SOL, so it reads 0 and the deposit is blocked before the user
+  // can click through to a signature prompt.
+  const runWalletCheck = useCallback(async () => {
+    if (!publicKey || !pool || clusterState.status !== 'allowed') {
+      setWalletBlock(null);
+      return;
+    }
+    setWalletChecking(true);
+    try {
+      const verdict = await checkWalletCanDeposit(
+        connection,
+        publicKey,
+        pool.denominationLamports,
+        clusterState.cluster
+      );
+      setWalletBlock(verdict.ok ? null : verdict.message);
+    } finally {
+      setWalletChecking(false);
+    }
+  }, [connection, publicKey, pool, clusterState]);
+
+  useEffect(() => {
+    void runWalletCheck();
+  }, [runWalletCheck]);
 
   // Not connected
   if (!connected || !publicKey) {
@@ -70,7 +118,15 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
 
   // Step 1: Select pool
   if (step === 'select') {
-    const canContinue = pool && pool.address && !poolInfo?.isPaused && !poolInfo?.isSaturated;
+    // walletBlock included so the user is stopped at the first screen where the denomination is
+    // known, rather than after moving to the confirm step.
+    const canContinue =
+      pool &&
+      pool.address &&
+      !poolInfo?.isPaused &&
+      !poolInfo?.isSaturated &&
+      clusterState.status === 'allowed' &&
+      walletBlock === null;
 
     return (
       <div className="space-y-6">
@@ -151,6 +207,14 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           </p>
         )}
 
+        {walletBlock && (
+          <WrongNetworkModal
+            message={walletBlock}
+            onRetry={() => void runWalletCheck()}
+            retrying={walletChecking}
+          />
+        )}
+
         <button
           onClick={() => {
             setError(null);
@@ -178,6 +242,24 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
       setConfirmUnknown(false);
 
       try {
+        // Anti-mainnet gate. Deliberately the first statement in the flow: before Poseidon is
+        // initialised, before a note exists, before anything is written to storage and before a
+        // transaction is built. A block therefore leaves no residue, and no note is staged for a
+        // deposit that was never attempted.
+        //
+        // Re-checked here rather than trusting the disabled button: UI state can be stale or
+        // raced, and this is the only place actually on the path to spending money.
+        await assertClusterAllowed(connection);
+
+        // And the wallet must be able to pay on it. Re-checked here rather than trusting the
+        // modal's state, for the same reason the cluster is: this is the path to spending money.
+        await assertWalletCanDeposit(
+          connection,
+          publicKey,
+          pool.denominationLamports,
+          clusterState.status === 'allowed' ? clusterState.cluster : 'devnet'
+        );
+
         // Initialize Poseidon hash (loads WASM, cached after first call)
         await initPoseidon();
 
@@ -274,7 +356,11 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
-        if (isWalletRejection(err)) {
+        if (err instanceof ClusterBlockedError || err instanceof WalletNotOnClusterError) {
+          // Nothing was generated, staged or sent, so report it plainly instead of falling through
+          // to the "your note has been saved" wording below, which would be false here.
+          setError(msg);
+        } else if (isWalletRejection(err)) {
           setError('Transaction cancelled.');
         } else if (msg.includes('insufficient') || msg.includes('not enough')) {
           setError('Not enough SOL in your wallet.');
@@ -347,11 +433,26 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           </div>
         )}
 
+        {walletBlock && (
+          <WrongNetworkModal
+            message={walletBlock}
+            onRetry={() => void runWalletCheck()}
+            retrying={walletChecking}
+          />
+        )}
+
         <button
           onClick={handleDeposit}
-          className="w-full py-3.5 btn-primary text-sm"
+          disabled={clusterState.status !== 'allowed' || walletBlock !== null}
+          className="w-full py-3.5 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Deposit {pool!.denominationSol} SOL
+          {clusterState.status !== 'allowed'
+            ? clusterState.status === 'checking'
+              ? 'Confirming network…'
+              : 'Blocked: wrong network'
+            : walletBlock !== null
+              ? `Blocked: wallet not on ${clusterState.cluster}`
+              : `Deposit ${pool!.denominationSol} SOL`}
         </button>
       </div>
     );

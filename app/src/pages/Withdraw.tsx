@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { assertClusterAllowed } from '../utils/clusterGate';
+import { useClusterGate } from '../hooks/useClusterGate';
 import { PublicKey } from '@solana/web3.js';
 import {
   decodeNote,
@@ -63,6 +65,8 @@ function isValidSolanaAddress(addr: string): boolean {
 
 export default function Withdraw() {
   const { connection } = useConnection();
+  // Interface state only. The enforcement is assertClusterAllowed inside the handlers.
+  const clusterState = useClusterGate();
   const { publicKey: connectedWallet } = useWallet();
 
   const [step, setStep] = useState<Step>('paste');
@@ -119,6 +123,11 @@ export default function Withdraw() {
     setProgressError(null);
 
     try {
+      // Anti-mainnet gate, before proof generation burns 15-60s of CPU and before the relayer is
+      // contacted. A withdrawal on the wrong cluster cannot succeed, but it would still hand the
+      // note's nullifier and the recipient address to whatever relayer is configured.
+      await assertClusterAllowed(connection);
+
       // Decode the full note with SDK (validates all fields)
       const note: SecretNote = decodeNote(parsedNote.raw);
       const poolPubkey = note.poolAddress;
@@ -292,7 +301,7 @@ export default function Withdraw() {
 
         <button
           onClick={handleNext}
-          disabled={!noteInput.trim()}
+          disabled={!noteInput.trim() || clusterState.status !== 'allowed'}
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
             noteInput.trim()
               ? 'btn-primary'
@@ -321,6 +330,10 @@ export default function Withdraw() {
       setQuoteLoading(true);
       setQuoteError(null);
       try {
+        // Same gate one step earlier, so a blocked user finds out before entering a recipient
+        // and waiting on a quote.
+        await assertClusterAllowed(connection);
+
         const raw = await fetchFeeQuote(parsedNote.poolAddress);
         const quote: FeeQuote = {
           relayerAddress: new PublicKey(raw.relayerAddress),
@@ -396,7 +409,9 @@ export default function Withdraw() {
 
         <button
           onClick={handleNext}
-          disabled={!recipient.trim() || quoteLoading}
+          disabled={
+            !recipient.trim() || quoteLoading || clusterState.status !== 'allowed'
+          }
           className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all ${
             recipient.trim() && !quoteLoading
               ? 'btn-primary'
@@ -515,9 +530,14 @@ export default function Withdraw() {
 
         <button
           onClick={() => executeWithdraw(0)}
-          className="w-full py-3.5 btn-primary text-sm"
+          disabled={clusterState.status !== 'allowed'}
+          className="w-full py-3.5 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Withdraw
+          {clusterState.status === 'allowed'
+            ? 'Withdraw'
+            : clusterState.status === 'checking'
+              ? 'Confirming network…'
+              : 'Blocked: wrong network'}
         </button>
       </div>
     );
@@ -568,7 +588,8 @@ export default function Withdraw() {
 
             <button
               onClick={() => executeWithdraw(0)}
-              className="w-full py-3 btn-primary text-sm"
+              disabled={clusterState.status !== 'allowed'}
+              className="w-full py-3 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Retry withdrawal
             </button>

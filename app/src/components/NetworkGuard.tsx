@@ -1,71 +1,37 @@
 import { useEffect, useState } from 'react';
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { NETWORK } from '../config';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useClusterGate } from '../hooks/useClusterGate';
+import { ALLOWED_CLUSTER } from '../utils/clusterGate';
 
 /**
- * Network sanity checks (L-9).
+ * Anti-mainnet banner (L-9, hardened).
  *
- * The previous version called phantom.solana.request({ method: 'disconnect' }) on
- * every connect — forcibly dropping the user's wallet session as a side effect of
- * rendering — and then showed its warning banner unconditionally, whether or not
- * anything was wrong. An always-on warning is noise, and users learn to dismiss it
- * without reading, which is worse than no warning.
+ * The previous version of this component verified the RPC's genesis hash against `NETWORK` and
+ * showed a warning. Three things were wrong with that as a safety measure:
  *
- * Now two real checks:
- *  1. Does the RPC endpoint actually serve the cluster the app is configured for?
- *     Verified by genesis hash. A mismatch is a hard configuration error (e.g.
- *     VITE_SOLANA_NETWORK=devnet with a mainnet VITE_RPC_ENDPOINT) and is shown
- *     as an error that cannot be dismissed.
- *  2. A one-time-per-session reminder to check the wallet's own network, because
- *     the wallet adapter exposes no reliable way to read it. Dismissible, and it
- *     stays dismissed.
+ *  - It compared configuration against configuration. `VITE_SOLANA_NETWORK=mainnet-beta` made
+ *    mainnet the expected value and the check passed, so it caught misconfiguration but not the
+ *    thing worth catching.
+ *  - It failed open. The `.catch()` on `getGenesisHash()` was empty by design, so an unreachable
+ *    or rate-limited RPC produced silence — identical to success.
+ *  - It gated nothing. Every action stayed callable behind the warning.
+ *
+ * Now the cluster must be positively identified as {@link ALLOWED_CLUSTER} (devnet unless
+ * explicitly overridden), unknown counts as blocked, and the pages disable their actions from the
+ * same hook while each handler independently re-checks before moving anything.
+ *
+ * The wallet reminder below is kept, and kept honest: the wallet-standard adapter exposes no way
+ * to read which network the user's wallet has selected, so that part is advice, not verification.
+ * It is not load-bearing — a transaction goes to the cluster behind the app's own connection,
+ * which is what the gate checks.
  */
-const GENESIS_HASHES: Record<string, string> = {
-  'mainnet-beta': '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
-  devnet: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',
-  testnet: '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY',
-};
-
 const REMINDER_DISMISSED_KEY = 'sornadocash_network_reminder_dismissed';
 
 export default function NetworkGuard() {
   const { connected } = useWallet();
-  const { connection } = useConnection();
-
-  const [clusterMismatch, setClusterMismatch] = useState<string | null>(null);
+  const cluster = useClusterGate();
   const [showReminder, setShowReminder] = useState(false);
 
-  // Check 1: the RPC endpoint must serve the configured cluster.
-  useEffect(() => {
-    let cancelled = false;
-    const expected = GENESIS_HASHES[NETWORK];
-    if (!expected) return; // unknown/custom cluster — nothing to compare against
-
-    connection
-      .getGenesisHash()
-      .then((actual) => {
-        if (cancelled) return;
-        if (actual !== expected) {
-          const actualNetwork =
-            Object.entries(GENESIS_HASHES).find(([, h]) => h === actual)?.[0] ??
-            'an unknown cluster';
-          setClusterMismatch(
-            `This app is configured for ${NETWORK}, but its RPC endpoint serves ${actualNetwork}. ` +
-              `Fix VITE_RPC_ENDPOINT or VITE_SOLANA_NETWORK. Deposits made now may be unrecoverable.`
-          );
-        }
-      })
-      .catch(() => {
-        // Endpoint unreachable: NetworkGuard is not the right place to report that;
-        // the deposit/withdraw flows surface RPC failures with context.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [connection]);
-
-  // Check 2: one-time wallet-network reminder, only once the user has connected.
   useEffect(() => {
     if (!connected) return;
     try {
@@ -86,17 +52,46 @@ export default function NetworkGuard() {
     setShowReminder(false);
   };
 
-  if (clusterMismatch) {
+  // Blocked: not dismissible, and the pages refuse to act while this is showing.
+  if (cluster.status === 'blocked') {
+    const isMainnet = cluster.cluster === 'mainnet-beta';
     return (
-      <div className="bg-red-500/10 border-b border-red-500/30 px-4 py-3">
+      <div
+        role="alert"
+        className="bg-red-500/10 border-b border-red-500/30 px-4 py-3"
+        data-testid="cluster-blocked"
+      >
         <div className="max-w-md mx-auto flex items-start gap-3">
-          <span className="text-red-400 shrink-0 mt-0.5">&#9888;</span>
+          <span className="text-red-400 shrink-0 mt-0.5" aria-hidden="true">
+            &#9888;
+          </span>
           <div className="flex-1">
-            <p className="text-red-300 text-sm font-medium">Wrong network configured</p>
-            <p className="text-red-400/70 text-xs mt-1 leading-relaxed">
-              {clusterMismatch}
+            <p className="text-red-300 text-sm font-medium">
+              {isMainnet
+                ? 'Mainnet detected — everything is disabled'
+                : cluster.code === 'unverified'
+                  ? 'Network not confirmed — everything is disabled'
+                  : 'Wrong network — everything is disabled'}
+            </p>
+            <p className="text-red-400/70 text-xs mt-1 leading-relaxed">{cluster.message}</p>
+            <p className="text-red-400/60 text-xs mt-2 leading-relaxed">
+              This build only acts on <strong>{ALLOWED_CLUSTER}</strong>. Deposits and
+              withdrawals stay blocked until it is confirmed. Any secret notes already saved in
+              this browser are untouched.
             </p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (cluster.status === 'checking') {
+    return (
+      <div className="bg-zinc-800/40 border-b border-zinc-700/40 px-4 py-2">
+        <div className="max-w-md mx-auto">
+          <p className="text-zinc-400 text-xs" data-testid="cluster-checking">
+            Confirming network…
+          </p>
         </div>
       </div>
     );
@@ -107,14 +102,18 @@ export default function NetworkGuard() {
   return (
     <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-3">
       <div className="max-w-md mx-auto flex items-start gap-3">
-        <span className="text-amber-400 shrink-0 mt-0.5">&#9888;</span>
+        <span className="text-amber-400 shrink-0 mt-0.5" aria-hidden="true">
+          &#9888;
+        </span>
         <div className="flex-1">
           <p className="text-amber-300 text-sm font-medium">
-            Check your wallet is on {NETWORK}
+            Check your wallet is on {cluster.cluster}
           </p>
           <p className="text-amber-400/70 text-xs mt-1 leading-relaxed">
-            Phantom: Settings → Developer Settings → Testnet Mode, then select the
-            matching cluster. Transactions will fail if your wallet is elsewhere.
+            This app is confirmed on {cluster.cluster}, so that is where funds move. Your wallet
+            may still be set elsewhere, which the adapter cannot read — if it is, signing will
+            fail or your wallet will warn you. Phantom: Settings → Developer Settings → Testnet
+            Mode, then pick {cluster.cluster}.
           </p>
         </div>
         <button

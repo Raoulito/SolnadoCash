@@ -19,6 +19,7 @@ import {
   type PendingNote,
 } from '../utils/noteVault';
 import { reconcilePendingNotes } from '../utils/noteReconcile';
+import { verifyCluster } from '../utils/clusterGate';
 import { explorerTxUrl } from '../config';
 
 export default function NoteRecovery() {
@@ -38,14 +39,24 @@ export default function NoteRecovery() {
   // confirmed; anything undecidable is left exactly as it was.
   useEffect(() => {
     let cancelled = false;
-    reconcilePendingNotes(connection)
-      .then(() => {
-        if (!cancelled) setNotes(pendingNotes());
+
+    // Confirm the cluster before reconciling. Reconciliation is the only read-only path in the app
+    // that DELETES something, so it must never run against a chain that is not the one the notes
+    // belong to. It would in fact survive that — an absent pool makes rebuildMerkleTree throw, the
+    // note is classed unresolved and kept — but relying on a downstream throw for a
+    // note-destroying decision is the wrong shape. Confirm first, then judge.
+    verifyCluster(connection)
+      .then((verdict) => {
+        if (cancelled || !verdict.ok) return;
+        return reconcilePendingNotes(connection).then(() => {
+          if (!cancelled) setNotes(pendingNotes());
+        });
       })
       .catch(() => {
         // Reconciliation is an optimisation, never a gate. If it fails the banner still shows
         // every note, which is the safe direction.
       });
+
     return () => {
       cancelled = true;
     };
