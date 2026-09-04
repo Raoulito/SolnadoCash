@@ -18,6 +18,10 @@ use solana_sdk::{
 };
 use std::time::Instant;
 
+/// Pool field offset, including the 8-byte discriminator. Verified against the on-chain
+/// struct by `npm run check:layout` (F-6).
+const OFF_NEXT_INDEX: usize = 8 + 80;
+
 const PROGRAM_ID: Pubkey = solana_sdk::pubkey!("DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59");
 const DENOMINATION: u64 = 1_000_000_000;
 const IX_INITIALIZE_POOL: [u8; 8] = [95, 180, 10, 172, 84, 174, 232, 40];
@@ -110,7 +114,9 @@ fn throughput_deposits_per_second() {
     println!("  plus roughly 1s per operation over RPC.\n");
 
     let next_index = u64::from_le_bytes(
-        svm.get_account(&pool).unwrap().data[8 + 80..8 + 88].try_into().unwrap(),
+        svm.get_account(&pool).unwrap().data[OFF_NEXT_INDEX..OFF_NEXT_INDEX + 8]
+            .try_into()
+            .unwrap(),
     );
     assert_eq!(next_index as u32, N, "all deposits should have landed");
 }

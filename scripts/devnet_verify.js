@@ -47,6 +47,13 @@ const RELAYER_FEE_MAX = 100_000n;
 const RELAYER_FEE_TAKEN = 100_000n;
 const TREASURY_FEE = DENOMINATION_BI / 500n;
 
+// Pool field offsets, including the 8-byte discriminator. Verified against the on-chain
+// struct by `npm run check:layout` (F-6): the offsets used to be inline literals here,
+// which no check could see.
+const OFF_NEXT_INDEX = 8 + 80;
+const OFF_TREASURY = 8 + 88;
+const OFF_IS_PAUSED = 8 + 123;
+
 const BUILD_DIR = path.join(__dirname, "../circuits/build");
 const WITHDRAW_WASM = path.join(BUILD_DIR, "withdraw_js/withdraw.wasm");
 const WITHDRAW_ZKEY = path.join(BUILD_DIR, "withdraw_final.zkey");
@@ -243,7 +250,7 @@ async function setupFixture(program, provider, recipientPredicate = null, commit
   let treasury;
   const existing = await connection.getAccountInfo(poolPda);
   if (existing) {
-    treasury = new PublicKey(existing.data.subarray(8 + 88, 8 + 120));
+    treasury = new PublicKey(existing.data.subarray(OFF_TREASURY, OFF_TREASURY + 32));
     console.log("  Reusing verification pool:", poolPda.toBase58());
   } else {
     treasury = funder.publicKey;
@@ -285,7 +292,7 @@ async function setupFixture(program, provider, recipientPredicate = null, commit
   const tree = new Tree(TREE_DEPTH);
   const poolKey = poolPda.toBase58();
   const poolData = (await connection.getAccountInfo(poolPda)).data;
-  const nextIndex = Number(poolData.readBigUInt64LE(8 + 80));
+  const nextIndex = Number(poolData.readBigUInt64LE(OFF_NEXT_INDEX));
 
   let cached = loadLeaves(poolKey);
   if (cached.length !== nextIndex) {
@@ -908,7 +915,7 @@ async function verifyM3(program, provider, fx) {
     .rpc();
 
   const paused = await provider.connection.getAccountInfo(fx.poolPda);
-  record("M-3", "pool is paused", paused.data[8 + 123] === 1, "is_paused = 1");
+  record("M-3", "pool is paused", paused.data[OFF_IS_PAUSED] === 1, "is_paused = 1");
 
   await expectReject("M-3", "deposits are blocked while paused", "PoolPaused", () =>
     program.methods
@@ -941,7 +948,7 @@ async function verifyM3(program, provider, fx) {
     .accountsPartial({ admin: provider.wallet.publicKey, pool: fx.poolPda })
     .rpc();
   const after = await provider.connection.getAccountInfo(fx.poolPda);
-  record("M-3", "pool unpaused again", after.data[8 + 123] === 0, "is_paused = 0");
+  record("M-3", "pool unpaused again", after.data[OFF_IS_PAUSED] === 0, "is_paused = 0");
 }
 
 // ── N-3: denomination floor keeps deposits withdrawable ──────────────────────

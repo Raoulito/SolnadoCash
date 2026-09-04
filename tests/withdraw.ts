@@ -47,6 +47,10 @@ const BN254_FIELD_ORDER =
 const BN254_Fq =
   21888242871839275222246405745257275088696311157297823662689037894645226208583n;
 
+// Pool field offset, including the 8-byte discriminator. Verified against the on-chain struct
+// by `npm run check:layout` (F-6).
+const OFF_IS_PAUSED = 8 + 123;
+
 const MAX_CU = 1_400_000;
 
 // ── Global Poseidon ───────────────────────────────────────────────────────────
@@ -1508,7 +1512,7 @@ describe("Withdraw (T21 + T22 ZK flow)", function () {
         .rpc();
 
       const poolAcc = await provider.connection.getAccountInfo(poolPda);
-      assert.equal(poolAcc!.data[8 + 123], 1, "pool should be paused");
+      assert.equal(poolAcc!.data[OFF_IS_PAUSED], 1, "pool should be paused");
 
       // Deposits must now fail...
       let depositBlocked = false;

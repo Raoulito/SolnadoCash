@@ -96,6 +96,36 @@ SOL transfers use **direct lamport mutation**, not `system_program::transfer` (w
 **relayer.try_borrow_mut_lamports()? += relayer_fee;
 ```
 
+Reading the pool by byte offset instead of through `AccountLoader` is where most of the saving comes
+from, and it moves a guarantee from the compiler to the author. The offsets are used in about two
+dozen places — the withdraw path itself, plus the monitor, relayer, SDK, front end, scripts and every
+fuzz harness — and for a while nothing checked any of them. Adding one field to `Pool` would have
+compiled cleanly, silently repointed every reader, and failed no test, because the tests hardcoded
+the same numbers. Most misreads fail closed; `denomination` does not, and a wrong denomination
+debits the vault by less than one denomination while satisfying a conservation check that was handed
+the same wrong value.
+
+So the offsets now live in one place and are asserted against the real struct at compile time:
+
+```rust
+const _: () = {
+    assert!(core::mem::size_of::<Pool>() == POOL_SIZE);
+    assert!(core::mem::offset_of!(Pool, denomination) == OFF_DENOMINATION);
+    // …every field, plus align_of and the hand-copied Anchor discriminator
+};
+```
+
+Moving a field now fails `anchor build` rather than producing a program that reads the wrong eight
+bytes as a denomination. The off-chain decoders are checked against the same source by
+`npm run check:layout`, which parses those constants and verifies every named offset in the
+JavaScript, TypeScript and test code agrees with them — the monitor reading `deposits` from a stale
+offset is the case that matters, since a layout change would otherwise blind the watchdog at exactly
+the moment there was something to see.
+
+The accounts are passed to the raw path as a named struct rather than a positional array for the
+same reason: the indices used to be aligned with the shim's field order by nothing but a comment on
+both sides.
+
 ### Error logs
 
 On-chain errors report the code and number but not a source location:
@@ -428,6 +458,9 @@ cd app && npm test && npm run lint
 
 # Monitor
 cd monitor && npm test
+
+# Pool layout: verify every off-chain byte offset against the on-chain struct
+npm run check:layout
 
 # Front-end attack suite (needs the hostile relayer running)
 node app/security/hostile_relayer.mjs 3999 &

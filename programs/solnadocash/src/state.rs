@@ -16,29 +16,71 @@ pub const EMPTY_TREE_ROOT: [u8; 32] = [
     0x88, 0x0a, 0x1e, 0x46, 0xea, 0xf7, 0x12, 0xf9, 0xd3, 0x71, 0xb6, 0xdf, 0x22, 0x19, 0x1f, 0x3e,
 ];
 
-// POOL_SIZE (without discriminator) = 32+32+8+1+8+32+1+1+1+1+8192+8+640 = 8957
-// With zero_copy, the on-disk layout must match the struct layout exactly.
-// We use repr(C) + explicit padding to ensure no surprises.
-// Layout:
-//   admin:          32 bytes (offset 0)
-//   mint:           32 bytes (offset 32)
-//   denomination:   8 bytes  (offset 64)
-//   mint_decimals:  1 byte   (offset 72)
-//   _pad0:          7 bytes  (offset 73) → aligns next_index to 8-byte boundary (offset 80)
-//   next_index:     8 bytes  (offset 80)
-//   treasury:       32 bytes (offset 88)
-//   version:        1 byte   (offset 120)
-//   bump:           1 byte   (offset 121)
-//   vault_bump:     1 byte   (offset 122)
-//   is_paused:      1 byte   (offset 123) — 0=false, 1=true
-//   _pad1:          4 bytes  (offset 124) → aligns current_root_index to 8-byte boundary (128)
-//   current_root_index: 8 bytes (offset 128)
-//   root_history:   8192 bytes (offset 136)
-//   filled_subtrees: 640 bytes (offset 8328)
-// Total: 8968 bytes
+// ── Pool account layout (F-6) ────────────────────────────────────────────────────────────────
 //
-// NOTE: POOL_SIZE constant updated to 8968 to match the padded layout.
+// With zero_copy the on-disk layout IS the struct layout, so `repr(C)` plus explicit padding
+// fixes it. That matters more here than in a normal Anchor program, because these offsets are
+// read directly rather than through `AccountLoader` in about two dozen places: the bare-metal
+// `withdraw` path (which is where its CU saving comes from), and the monitor, relayer, SDK,
+// front end and scripts off-chain.
+//
+// Until F-6 nothing checked them. Adding or reordering one field compiled cleanly, silently
+// repointed every reader, and no test failed — because every test hardcoded the same stale
+// numbers. Most misreads happen to fail closed (a wrong `treasury` or `vault_bump` rejects
+// every withdrawal), but `denomination` does NOT: a smaller-than-real value passes the vault
+// balance guard, debits the vault by less than one denomination, and satisfies the conservation
+// check, because that check is self-consistent with whatever denomination it was handed. The
+// pool would quietly stop conserving value while the same struct change blinded the monitor
+// that watches for exactly that.
+//
+// The `const _: ()` block below the struct is the fix. It fails the BUILD if any field moves,
+// which is the only point at which a layout change can be caught before it reaches a ledger.
+//
+// Offsets are relative to the START OF THE STRUCT. Raw account data is prefixed with the
+// 8-byte Anchor discriminator, so add `DISCRIMINATOR_LEN` when indexing that.
+//
+//   field                offset  size
+//   admin                     0    32
+//   mint                     32    32
+//   denomination             64     8
+//   mint_decimals            72     1
+//   _pad0                    73     7   aligns next_index to 8
+//   next_index               80     8
+//   treasury                 88    32
+//   version                 120     1
+//   bump                    121     1
+//   vault_bump              122     1
+//   is_paused               123     1   0 = false, 1 = true
+//   _pad1                   124     4   aligns current_root_index to 8
+//   current_root_index      128     8
+//   root_history            136  8192
+//   filled_subtrees        8328   640
+//   total                        8968
 pub const POOL_SIZE: usize = 32 + 32 + 8 + 1 + 7 + 8 + 32 + 1 + 1 + 1 + 1 + 4 + 8 + 8192 + 640; // 8968
+
+/// Length of the Anchor account discriminator prefix.
+pub const DISCRIMINATOR_LEN: usize = 8;
+
+pub const OFF_ADMIN: usize = 0;
+pub const OFF_MINT: usize = 32;
+pub const OFF_DENOMINATION: usize = 64;
+pub const OFF_NEXT_INDEX: usize = 80;
+pub const OFF_TREASURY: usize = 88;
+pub const OFF_VERSION: usize = 120;
+pub const OFF_BUMP: usize = 121;
+pub const OFF_VAULT_BUMP: usize = 122;
+pub const OFF_IS_PAUSED: usize = 123;
+pub const OFF_CURRENT_ROOT_INDEX: usize = 128;
+pub const OFF_ROOT_HISTORY: usize = 136;
+pub const OFF_FILLED_SUBTREES: usize = 8328;
+
+/// First 8 bytes of sha256("account:Pool").
+///
+/// The bare-metal withdraw path cannot use `AccountLoader`, so it compares this constant
+/// against the account prefix itself. A hand-copied hash is exactly the kind of value that
+/// rots silently, so the const block below pins it against Anchor's derived discriminator:
+/// renaming the `Pool` struct now breaks the build instead of rejecting every pool at runtime.
+pub const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
 
 // NullifierAccount: pool(32) + nullifier_hash(32) + slot(8) = 72 (without discriminator)
 pub const NULLIFIER_SIZE: usize = 32 + 32 + 8; // = 72 (without discriminator)
@@ -66,6 +108,60 @@ pub struct Pool {
     pub filled_subtrees: [[u8; 32]; TREE_DEPTH],     // offset 8328, size 640
     // Total: 8968 bytes
 }
+
+/// F-6: the layout guard.
+///
+/// Every constant above is load-bearing for code that reads this account as raw bytes, on-chain
+/// and off. These assertions are evaluated at compile time, so moving a field fails
+/// `anchor build` rather than producing a program that reads the wrong eight bytes as a
+/// denomination. `align_of` is included because an added field could change the alignment and
+/// reintroduce implicit padding, which `zero_copy(unsafe)` does not check for us.
+const _: () = {
+    assert!(core::mem::size_of::<Pool>() == POOL_SIZE);
+    assert!(core::mem::align_of::<Pool>() == 8);
+    assert!(core::mem::offset_of!(Pool, admin) == OFF_ADMIN);
+    assert!(core::mem::offset_of!(Pool, mint) == OFF_MINT);
+    assert!(core::mem::offset_of!(Pool, denomination) == OFF_DENOMINATION);
+    assert!(core::mem::offset_of!(Pool, next_index) == OFF_NEXT_INDEX);
+    assert!(core::mem::offset_of!(Pool, treasury) == OFF_TREASURY);
+    assert!(core::mem::offset_of!(Pool, version) == OFF_VERSION);
+    assert!(core::mem::offset_of!(Pool, bump) == OFF_BUMP);
+    assert!(core::mem::offset_of!(Pool, vault_bump) == OFF_VAULT_BUMP);
+    assert!(core::mem::offset_of!(Pool, is_paused) == OFF_IS_PAUSED);
+    assert!(core::mem::offset_of!(Pool, current_root_index) == OFF_CURRENT_ROOT_INDEX);
+    assert!(core::mem::offset_of!(Pool, root_history) == OFF_ROOT_HISTORY);
+    assert!(core::mem::offset_of!(Pool, filled_subtrees) == OFF_FILLED_SUBTREES);
+
+    // The root scan walks the whole ring; it must end exactly where filled_subtrees begins.
+    assert!(OFF_ROOT_HISTORY + ROOT_HISTORY_SIZE * 32 == OFF_FILLED_SUBTREES);
+};
+
+/// F-6: pin the hand-copied discriminator against the one Anchor derives.
+///
+/// A const fn because `Discriminator::DISCRIMINATOR` is a `&'static [u8]` and slice equality is
+/// not const. Kept as a compile-time check rather than a test so it cannot be skipped by
+/// building without running tests, which is precisely how a release gets cut.
+const fn discriminator_matches(hardcoded: &[u8], derived: &[u8]) -> bool {
+    if hardcoded.len() != derived.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < hardcoded.len() {
+        if hardcoded[i] != derived[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = {
+    assert!(DISCRIMINATOR_LEN == Pool::DISCRIMINATOR.len());
+    assert!(discriminator_matches(
+        &POOL_DISCRIMINATOR,
+        Pool::DISCRIMINATOR
+    ));
+};
 
 #[account]
 pub struct NullifierAccount {

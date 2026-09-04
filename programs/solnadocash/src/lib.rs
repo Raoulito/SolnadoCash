@@ -194,16 +194,22 @@ pub mod solnadocash {
     }
 
     pub fn withdraw(ctx: Context<WithdrawShim>, args: WithdrawArgs) -> Result<()> {
-        let accs = [
-            ctx.accounts.pool.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
-            ctx.accounts.nullifier_pda.to_account_info(),
-            ctx.accounts.recipient.to_account_info(),
-            ctx.accounts.treasury.to_account_info(),
-            ctx.accounts.relayer.to_account_info(),
-            ctx.accounts.system_program.to_account_info(),
-        ];
-        withdraw::process_withdraw(ctx.program_id, &accs, args)
+        // Named fields rather than a positional array (F-7): the previous form built a
+        // `[AccountInfo; 7]` here whose order had to match a set of index constants in
+        // withdraw.rs, enforced only by a comment on both sides.
+        withdraw::process_withdraw(
+            ctx.program_id,
+            withdraw::WithdrawAccounts {
+                pool: ctx.accounts.pool.to_account_info(),
+                vault: ctx.accounts.vault.to_account_info(),
+                nullifier_pda: ctx.accounts.nullifier_pda.to_account_info(),
+                recipient: ctx.accounts.recipient.to_account_info(),
+                treasury: ctx.accounts.treasury.to_account_info(),
+                relayer: ctx.accounts.relayer.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+            },
+            args,
+        )
     }
 
     pub fn pause_pool(ctx: Context<AdminPool>) -> Result<()> {

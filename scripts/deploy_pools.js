@@ -22,6 +22,11 @@ const fs = require("fs");
 
 // Pool PDA seeds include a version byte, so bumping VERSION yields a fresh pool at the
 // same denomination — the only way to recover from a mis-set (immutable) treasury.
+// Pool field offsets, including the 8-byte discriminator. Verified against the on-chain
+// struct by `npm run check:layout` (F-6): the offsets used to be inline literals here,
+// which no check could see.
+const OFF_TREASURY = 8 + 88;
+
 const VERSION = parseInt(process.env.VERSION || "0", 10);
 
 // The treasury receives the 0.2% protocol fee and is FIXED AT POOL CREATION — it can
@@ -153,7 +158,7 @@ async function main() {
     if (existing) {
       // Do not just skip: an existing pool may have the WRONG treasury, which is
       // unfixable and must be surfaced loudly rather than reported as "exists".
-      const existingTreasury = new PublicKey(existing.data.subarray(8 + 88, 8 + 120));
+      const existingTreasury = new PublicKey(existing.data.subarray(OFF_TREASURY, OFF_TREASURY + 32));
       if (existingTreasury.equals(treasuryPubkey)) {
         console.log("  Already deployed, treasury correct, skipping.\n");
         results.push({ label: pool.label, address: poolPda.toBase58(), status: "exists" });
@@ -195,7 +200,7 @@ async function main() {
       // is how the devnet 1 SOL pool ended up paying fees to a discarded ephemeral
       // keypair for 6 withdrawals before anyone noticed.
       const created = await connection.getAccountInfo(poolPda);
-      const writtenTreasury = new PublicKey(created.data.subarray(8 + 88, 8 + 120));
+      const writtenTreasury = new PublicKey(created.data.subarray(OFF_TREASURY, OFF_TREASURY + 32));
       if (!writtenTreasury.equals(treasuryPubkey)) {
         console.error(
           `  ERROR:     treasury readback MISMATCH — wrote ${writtenTreasury.toBase58()}, ` +

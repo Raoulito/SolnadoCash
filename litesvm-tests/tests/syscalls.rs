@@ -34,6 +34,7 @@ const IX_DEPOSIT: [u8; 8] = [242, 35, 198, 137, 82, 225, 242, 182];
 const IX_WITHDRAW: [u8; 8] = [183, 18, 70, 156, 148, 109, 161, 34];
 
 const OFF_NEXT_INDEX: usize = 8 + 80;
+const OFF_CURRENT_ROOT_INDEX: usize = 8 + 128;
 const OFF_ROOT_HISTORY: usize = 8 + 136;
 
 struct Fixture {
@@ -129,7 +130,11 @@ impl Fixture {
 
     fn current_root(&self) -> Vec<u8> {
         let d = self.pool_data();
-        let idx = u64::from_le_bytes(d[8 + 128..8 + 136].try_into().unwrap()) as usize;
+        let idx = u64::from_le_bytes(
+            d[OFF_CURRENT_ROOT_INDEX..OFF_CURRENT_ROOT_INDEX + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
         d[OFF_ROOT_HISTORY + idx * 32..OFF_ROOT_HISTORY + idx * 32 + 32].to_vec()
     }
 }

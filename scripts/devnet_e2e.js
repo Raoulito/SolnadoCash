@@ -48,6 +48,11 @@ const RELAYER_FEE_MAX = _FEE_WANTED < _FEE_CEILING ? _FEE_WANTED : _FEE_CEILING;
 const RELAYER_FEE_TAKEN = RELAYER_FEE_MAX;
 const TREASURY_FEE = DENOMINATION_BI / 500n; // 200_000 lamports
 
+// Pool field offsets, including the 8-byte discriminator. Verified against the on-chain
+// struct by `npm run check:layout` (F-6): the offsets used to be inline literals here,
+// which no check could see.
+const OFF_TREASURY = 8 + 88;
+
 const BUILD_DIR = path.join(__dirname, "../circuits/build");
 const WITHDRAW_WASM = path.join(BUILD_DIR, "withdraw_js/withdraw.wasm");
 const WITHDRAW_ZKEY = path.join(BUILD_DIR, "withdraw_final.zkey");
@@ -308,7 +313,7 @@ async function main() {
   // exactly the D-1 failure.
   const existing = await provider.connection.getAccountInfo(poolPda);
   if (existing) {
-    const storedTreasury = new PublicKey(existing.data.subarray(8 + 88, 8 + 120));
+    const storedTreasury = new PublicKey(existing.data.subarray(OFF_TREASURY, OFF_TREASURY + 32));
     console.log("  Pool already exists, reusing it.");
     console.log("  Treasury (on-chain):", storedTreasury.toBase58());
     if (process.env.TREASURY && storedTreasury.toBase58() !== process.env.TREASURY) {

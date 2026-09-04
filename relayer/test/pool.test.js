@@ -7,6 +7,10 @@
 // relayer signs and pays, and the transaction dies on-chain at the pool ownership
 // check — burning the relayer's fee on every attempt.
 
+// Pool field offsets, including the 8-byte discriminator. Verified against the on-chain
+// struct by `npm run check:layout` (F-6).
+const OFF_DENOMINATION = 8 + 64;
+const OFF_TREASURY = 8 + 88;
 import { strict as assert } from "node:assert";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import {
@@ -26,8 +30,8 @@ function mockConnection(account) {
 function realPool({ denomination = 1_000_000_000n, treasury = Keypair.generate().publicKey } = {}) {
   const data = Buffer.alloc(POOL_ACCOUNT_LEN);
   POOL_DISCRIMINATOR.copy(data, 0);
-  data.writeBigUInt64LE(denomination, 8 + 64);
-  treasury.toBuffer().copy(data, 8 + 88);
+  data.writeBigUInt64LE(denomination, OFF_DENOMINATION);
+  treasury.toBuffer().copy(data, OFF_TREASURY);
   return { owner: PROGRAM_ID, data };
 }
 

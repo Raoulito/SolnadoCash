@@ -42,6 +42,7 @@ const OFF_NEXT_INDEX: usize = 8 + 80;
 const OFF_TREASURY: usize = 8 + 88;
 const OFF_BUMP: usize = 8 + 121;
 const OFF_VAULT_BUMP: usize = 8 + 122;
+const OFF_ROOT_HISTORY: usize = 8 + 136;
 const OFF_IS_PAUSED: usize = 8 + 123;
 
 #[derive(FuzzTestMethods)]
@@ -295,7 +296,7 @@ impl FuzzTest {
         if self.trident.random_bool() {
             if let Some(d) = self.read_pool() {
                 let idx = (d[OFF_IS_PAUSED] as usize) % 256;
-                let start = 8 + 136 + idx * 32;
+                let start = OFF_ROOT_HISTORY + idx * 32;
                 if d.len() >= start + 32 {
                     root.copy_from_slice(&d[start..start + 32]);
                 }
