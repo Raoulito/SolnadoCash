@@ -15,7 +15,10 @@ const OLD = Date.now() - 10 * 60 * 1000; // comfortably past the grace period
 
 const hasLeaf = vi.fn();
 const rebuild = vi.fn();
-const poseidon = vi.fn(() => 12345n);
+// Rest-typed so the mock below can forward its arguments. Inferred as zero-arity, this broke
+// `tsc --noEmit` (TS2556) and therefore `npm run build`, while `vitest run` passed — vitest does
+// not typecheck, so the suite was green against a build that could not be produced.
+const poseidon = vi.fn((..._args: unknown[]) => 12345n);
 
 vi.mock('./merkle', () => ({
   rebuildMerkleTree: (...a: unknown[]) => rebuild(...a),
@@ -36,15 +39,42 @@ vi.mock('@solnadocash/sdk', () => ({
   },
 }));
 
-/** Stage a note with a chosen age. */
-function stageAged(note: string, createdAt: number) {
-  stageNote({ note, poolAddress: POOL, denominationSol: 0.1 });
-  const raw = JSON.parse(localStorage.getItem('sornadocash_pending_notes_v1') ?? '[]');
+const STORE = 'sornadocash_pending_notes_v1';
+
+function patch(note: string, fields: Record<string, unknown>) {
+  const raw = JSON.parse(localStorage.getItem(STORE) ?? '[]');
   localStorage.setItem(
-    'sornadocash_pending_notes_v1',
-    JSON.stringify(raw.map((n: { note: string }) => (n.note === note ? { ...n, createdAt } : n)))
+    STORE,
+    JSON.stringify(raw.map((n: { note: string }) => (n.note === note ? { ...n, ...fields } : n)))
   );
 }
+
+/**
+ * A note whose deposit WAS broadcast, staged and sent at the given times.
+ *
+ * Reconciliation only judges notes in this shape. Defaulting `sentAt` to `createdAt` keeps the
+ * pre-existing tests meaningful: they describe a note that was staged and broadcast together, which
+ * is the ordinary case.
+ */
+function stageSent(note: string, createdAt: number, sentAt = createdAt) {
+  stageNote({ note, poolAddress: POOL, denominationSol: 0.1 });
+  patch(note, { createdAt, sentAt, status: 'sent', signature: 'sig' });
+}
+
+/** A note staged but never handed to sendTransaction — the SEC-03 shape. */
+function stageUnsent(note: string, createdAt: number) {
+  stageNote({ note, poolAddress: POOL, denominationSol: 0.1 });
+  patch(note, { createdAt });
+}
+
+/** A note stored before `sentAt` existed. */
+function stageLegacy(note: string, createdAt: number) {
+  stageNote({ note, poolAddress: POOL, denominationSol: 0.1 });
+  patch(note, { createdAt, status: 'sent', signature: 'sig' });
+}
+
+// Retained name so the existing cases below keep reading as written.
+const stageAged = stageSent;
 
 const fakeConnection = {} as never;
 
@@ -132,5 +162,63 @@ describe('reconcilePendingNotes', () => {
     const r = await reconcilePendingNotes(fakeConnection);
     expect(r).toEqual({ confirmed: 0, discarded: 0, unresolved: 0 });
     expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  // ── SEC-03 ────────────────────────────────────────────────────────────────────
+  //
+  // The path that lost funds: a note is written to storage BEFORE the wallet is asked to sign, so
+  // its age says nothing about whether a transaction exists. With the grace period measured from
+  // staging, a slow hardware-wallet approval let reconciliation run against a chain that was
+  // entirely self-consistent — nothing missing, tree verifiably complete, commitment genuinely
+  // absent — and delete the note as worthless moments before the deposit landed.
+  //
+  // These four cases are the ones that must never discard.
+
+  it('SEC-03: NEVER discards an un-broadcast note, however old', async () => {
+    stageUnsent(NOTE, Date.now() - 60 * 60 * 1000); // staged an hour ago, never sent
+    hasLeaf.mockReturnValue(false); // chain is complete and the commitment is absent
+
+    const r = await reconcilePendingNotes(fakeConnection);
+    expect(r.discarded).toBe(0);
+    expect(r.unresolved).toBe(1);
+    expect(pendingNotes()).toHaveLength(1);
+  });
+
+  it('SEC-03: does not even read the chain for an un-broadcast note', async () => {
+    stageUnsent(NOTE, Date.now() - 60 * 60 * 1000);
+    await reconcilePendingNotes(fakeConnection);
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  it('SEC-03: grace runs from broadcast, not staging — slow wallet approval is safe', async () => {
+    // Staged 10 minutes ago, but only broadcast 5 seconds ago: still in flight.
+    stageSent(NOTE, Date.now() - 10 * 60 * 1000, Date.now() - 5_000);
+    hasLeaf.mockReturnValue(false);
+
+    const r = await reconcilePendingNotes(fakeConnection);
+    expect(r.discarded).toBe(0);
+    expect(r.unresolved).toBe(1);
+    expect(pendingNotes()).toHaveLength(1);
+  });
+
+  it('SEC-03: NEVER discards a note stored before sentAt existed', async () => {
+    stageLegacy(NOTE, OLD);
+    hasLeaf.mockReturnValue(false);
+
+    const r = await reconcilePendingNotes(fakeConnection);
+    expect(r.discarded).toBe(0);
+    expect(r.unresolved).toBe(1);
+    expect(pendingNotes()).toHaveLength(1);
+  });
+
+  it('still discards a note broadcast long ago and provably absent', async () => {
+    // The behaviour the feature exists for must survive the fix: once the blockhash has expired a
+    // broadcast deposit can no longer land, so a negative answer is final.
+    stageSent(NOTE, OLD, OLD);
+    hasLeaf.mockReturnValue(false);
+
+    const r = await reconcilePendingNotes(fakeConnection);
+    expect(r.discarded).toBe(1);
+    expect(pendingNotes()).toHaveLength(0);
   });
 });

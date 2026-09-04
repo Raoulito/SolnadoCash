@@ -95,6 +95,18 @@ export interface PendingNote {
   /** 'unsent' until broadcast, 'sent' after, 'confirmed' once seen on-chain. */
   status: 'unsent' | 'sent' | 'confirmed';
   createdAt: number;
+  /**
+   * When the deposit was actually handed to `sendTransaction`, as opposed to when the note was
+   * staged. Absent while the status is 'unsent'.
+   *
+   * These are not the same instant and the difference is security-relevant (SEC-03). A note is
+   * written to storage BEFORE the wallet is asked to sign, so `createdAt` starts a clock that has
+   * nothing to do with whether a transaction exists. A hardware wallet approval, a mobile handoff,
+   * or a user who simply walks away can put minutes between the two. Reconciliation judges a note
+   * by whether its deposit had time to land, which is a question about broadcast time only — so it
+   * reads this field and refuses to judge a note that does not have one.
+   */
+  sentAt?: number;
 }
 
 function readAll(): PendingNote[] {
@@ -141,9 +153,18 @@ export function markNoteStatus(
   status: PendingNote['status'],
   signature?: string
 ): void {
-  const notes = readAll().map((n) =>
-    n.note === note ? { ...n, status, signature: signature ?? n.signature } : n
-  );
+  const notes = readAll().map((n) => {
+    if (n.note !== note) return n;
+    return {
+      ...n,
+      status,
+      signature: signature ?? n.signature,
+      // Stamp the first transition out of 'unsent'. Reconciliation measures its grace period from
+      // this, never from createdAt (SEC-03). Preserved once set so a later 'confirmed' transition
+      // does not push the clock forward.
+      sentAt: status === 'unsent' ? n.sentAt : (n.sentAt ?? Date.now()),
+    };
+  });
   writeAll(notes);
 }
 

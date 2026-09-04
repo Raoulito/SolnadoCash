@@ -24,11 +24,14 @@ import { rebuildMerkleTree } from './merkle';
 import { clearNote, markNoteStatus, pendingNotes } from './noteVault';
 
 /**
- * How long to leave a note alone before judging it.
+ * How long to leave a broadcast note alone before judging it.
  *
- * Solana confirms in a second or two, so this is generously long. It only matters for a deposit
- * that is genuinely still in flight: judging that one too early would discard a note whose money
- * is about to exist.
+ * Measured from the moment the deposit was handed to `sendTransaction`, never from when the note was
+ * staged (SEC-03) — see the guard in the loop below for why the distinction matters.
+ *
+ * Solana confirms in a second or two, and a transaction's blockhash expires after roughly 150 slots,
+ * so two minutes after broadcast a deposit that has not appeared can no longer appear. That is the
+ * property that makes a negative answer safe rather than merely probable.
  */
 const GRACE_MS = 2 * 60 * 1000;
 
@@ -55,8 +58,32 @@ export async function reconcilePendingNotes(
   await initPoseidon();
 
   for (const entry of notes) {
-    // Too new to judge: a deposit submitted seconds ago may not be visible yet.
-    if (Date.now() - entry.createdAt < GRACE_MS) {
+    // SEC-03. Only a note whose deposit was actually BROADCAST may be judged, and the clock runs
+    // from the broadcast, not from when the note was written to storage.
+    //
+    // The two are different instants. `stageNote` persists the note before the wallet is asked to
+    // sign — that ordering is deliberate and is what stops a crash mid-signature losing the only key
+    // to a deposit. But it means `createdAt` starts running while no transaction exists at all.
+    //
+    // The path that lost funds: stage at t=0, user spends three minutes approving on a hardware
+    // wallet, a second tab remounts the recovery banner at t=120s and reconciles. Nothing has been
+    // broadcast, so the chain is entirely self-consistent — `pool.next_index` and the deposit logs
+    // agree, the rebuilt tree verifies as complete, and the commitment is genuinely absent. The
+    // completeness guard below cannot fire because nothing is missing. The note was therefore
+    // deleted as worthless, and the deposit landed moments later against a note that no longer
+    // existed.
+    //
+    // A note with no `sentAt` is unjudgeable rather than worthless, so it is left alone. That also
+    // covers notes stored before this field existed.
+    if (entry.status === 'unsent' || entry.sentAt === undefined) {
+      result.unresolved++;
+      continue;
+    }
+
+    // Broadcast, but not long enough ago to be sure. A transaction carries a blockhash that expires
+    // after roughly 150 slots, so once the grace period has elapsed a deposit that has not appeared
+    // can no longer appear — which is what makes a negative answer safe after this point.
+    if (Date.now() - entry.sentAt < GRACE_MS) {
       result.unresolved++;
       continue;
     }
