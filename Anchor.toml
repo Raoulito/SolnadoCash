@@ -1,5 +1,5 @@
 [toolchain]
-package_manager = "yarn"
+package_manager = "npm"
 
 [features]
 resolution = true
@@ -19,4 +19,11 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+# Invokes the ts-mocha declared in package.json devDependencies by explicit path rather than through
+# `npx`. Both resolve the same binary here, but `npx` will silently fetch a package from the registry
+# when it is not installed locally, so a broken install would run some other version instead of
+# failing. The explicit path fails loudly.
+#
+# Note that `ts-mocha --version` reports mocha's version (9.2.2), not its own — ts-mocha 10.1.0 is
+# what is installed.
+test = "./node_modules/.bin/ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
