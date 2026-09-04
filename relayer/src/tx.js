@@ -183,10 +183,47 @@ export async function submitWithdraw({
     skipPreflight: false,
   });
 
-  await connection.confirmTransaction(
+  // SEC-04: confirmTransaction RESOLVES on a failed transaction — it does not reject.
+  //
+  // A program error, a compute-budget overrun or a failed constraint arrives as
+  // `value.err` on a fulfilled promise. Awaiting it without reading the result therefore treats
+  // "included and reverted" identically to "included and succeeded", and the signature was returned
+  // either way. The relayer answered HTTP 200, the interface showed a completed withdrawal with an
+  // explorer link, and the recipient's balance was unchanged — the worst shape for a privacy tool,
+  // because the user's next move is to assume the funds were taken.
+  //
+  // `skipPreflight: false` catches most failures before submission, so what remains is the case
+  // where state moved between preflight and execution: the proof's root rotated out of the 256-entry
+  // ring, or another transaction created the same nullifier first. Both are ordinary under load.
+  //
+  // No funds are at risk when this happens — a failed withdrawal does not create the nullifier, so
+  // the note stays spendable — which is exactly why reporting it accurately matters. The user needs
+  // to know to retry rather than to conclude the money is gone.
+  const confirmation = await connection.confirmTransaction(
     { signature, blockhash, lastValidBlockHeight },
     "confirmed"
   );
+
+  if (confirmation?.value?.err) {
+    const onChainError = confirmation.value.err;
+
+    // The API layer maps program failures to client-facing codes by matching the hex form Anchor
+    // emits in simulation logs ("0x1774"), but a confirmed-then-reverted transaction reports the
+    // same failure as a decimal `{ InstructionError: [i, { Custom: 6004 }] }`. Include both so a
+    // reversion detected here is classified identically to one caught during preflight, rather
+    // than degrading to a generic error.
+    const custom = onChainError?.InstructionError?.[1]?.Custom;
+    const hex = typeof custom === "number" ? ` (custom error 0x${custom.toString(16)})` : "";
+
+    const err = new Error(
+      `Withdrawal reverted on-chain: ${JSON.stringify(onChainError)}${hex}`
+    );
+    // Carried so the API layer can surface the signature: the transaction is on the ledger and the
+    // user is entitled to inspect it, even though it failed.
+    err.signature = signature;
+    err.onChainError = onChainError;
+    throw err;
+  }
 
   return signature;
 }
