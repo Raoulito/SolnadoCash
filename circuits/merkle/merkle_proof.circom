@@ -13,13 +13,33 @@ include "../lib/poseidon.circom";
 // matches the public `root` signal, the membership proof is valid.
 //
 // R1CS constraint note:
-//   Each constraint can contain at most ONE multiplication.
-//   The selection "if idx=0: left=current, else left=sibling" is implemented as:
-//     tmp[i] = idx * (sibling - current)    ← ONE multiplication (quadratic)
-//     left   = tmp[i] + current             ← linear (no multiplication)
-//   Equivalent to: left = current + idx*(sibling - current)
-//     When idx=0: left = current   ✓
-//     When idx=1: left = sibling   ✓
+//   Each constraint can contain at most ONE multiplication, and the left/right selection needs
+//   only one. Writing it as two products was the obvious form and cost one constraint per level
+//   more than necessary:
+//
+//     tmp_left  = idx * (sibling - current)     ← quadratic
+//     tmp_right = idx * (current - sibling)     ← quadratic, and exactly -tmp_left
+//
+//   Since the second product is the negation of the first, `right` follows from the same product
+//   with no further multiplication:
+//
+//     sel   = idx * (sibling - current)         ← the only quadratic constraint
+//     left  = current + sel                     ← linear
+//     right = sibling - sel                     ← linear
+//
+//   By cases, with d = sibling - current:
+//     idx = 0 → sel = 0 → left = current,             right = sibling
+//     idx = 1 → sel = d → left = current + d = sibling, right = sibling - d = current
+//
+//   Identical semantics, 20 constraints saved on a depth-20 tree, 40 once the association-set
+//   proof adds a second tree. That is only ~0.17% of the circuit, so it is not a performance
+//   change; it is done because it is free and correct, and because altering this template
+//   invalidates the proving key — so it can only ride along with a change that already requires a
+//   new ceremony rather than justify one of its own.
+//
+//   Equivalence was checked by instantiating the previous and current templates over the same
+//   signals in one circuit: a valid mixed-direction path is accepted, and a corrupted root,
+//   corrupted sibling and non-binary index are each rejected.
 template MerkleProof(levels) {
     signal input leaf;
     signal input root;
@@ -30,11 +50,8 @@ template MerkleProof(levels) {
     signal levelHashes[levels + 1];
     levelHashes[0] <== leaf;
 
-    // Intermediate signals — one set per level.
-    // tmp_left[i]  = pathIndices[i] * (pathElements[i] - levelHashes[i])
-    // tmp_right[i] = pathIndices[i] * (levelHashes[i]  - pathElements[i])
-    signal tmp_left[levels];
-    signal tmp_right[levels];
+    // One product per level: sel[i] = pathIndices[i] * (pathElements[i] - levelHashes[i])
+    signal sel[levels];
     signal lefts[levels];
     signal rights[levels];
 
@@ -46,13 +63,9 @@ template MerkleProof(levels) {
 
         hashers[i] = PoseidonHash(2);
 
-        // Left selection: current when idx=0, sibling when idx=1
-        tmp_left[i]  <== pathIndices[i] * (pathElements[i] - levelHashes[i]);
-        lefts[i]     <== tmp_left[i] + levelHashes[i];
-
-        // Right selection: sibling when idx=0, current when idx=1
-        tmp_right[i] <== pathIndices[i] * (levelHashes[i] - pathElements[i]);
-        rights[i]    <== tmp_right[i] + pathElements[i];
+        sel[i]    <== pathIndices[i] * (pathElements[i] - levelHashes[i]);
+        lefts[i]  <== levelHashes[i] + sel[i];
+        rights[i] <== pathElements[i] - sel[i];
 
         hashers[i].inputs[0] <== lefts[i];
         hashers[i].inputs[1] <== rights[i];
