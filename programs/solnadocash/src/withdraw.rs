@@ -6,7 +6,10 @@ use anchor_lang::solana_program::{
 use solana_program::poseidon::{hashv, Endianness, Parameters};
 use groth16_solana::groth16::Groth16Verifier;
 
-use crate::state::{NullifierAccount, NULLIFIER_SIZE, ROOT_HISTORY_SIZE, EMPTY_TREE_ROOT};
+use crate::state::{
+    NullifierAccount, DISCRIMINATOR_LEN, EMPTY_TREE_ROOT, NULLIFIER_SIZE, OFF_DENOMINATION,
+    OFF_ROOT_HISTORY, OFF_TREASURY, OFF_VAULT_BUMP, POOL_DISCRIMINATOR, ROOT_HISTORY_SIZE,
+};
 use crate::error::ErrorCode;
 use crate::vk::WITHDRAW_VK;
 use crate::events::WithdrawalEvent;
@@ -52,14 +55,27 @@ pub fn worst_case_user_amount(denomination: u64) -> Option<u64> {
         .and_then(|x| x.checked_sub(denomination / MAX_RELAYER_FEE_DIVISOR))
 }
 
-// Account indices (MUST match lib.rs WithdrawShim order)
-const IDX_POOL: usize = 0;
-const IDX_VAULT: usize = 1;
-const IDX_NULLIFIER_PDA: usize = 2;
-const IDX_RECIPIENT: usize = 3;
-const IDX_TREASURY: usize = 4;
-const IDX_RELAYER: usize = 5;
-const IDX_SYSTEM_PROGRAM: usize = 6;
+/// Named account bindings for `process_withdraw` (F-7).
+///
+/// These arrived as a `&[AccountInfo]` indexed by `IDX_POOL`, `IDX_VAULT` and so on, and the only
+/// thing keeping those indices aligned with `WithdrawShim`'s field order was a comment saying they
+/// must be. Reordering either list compiled cleanly and silently reassigned every account role.
+///
+/// Most such swaps do fail closed — the pool owner and discriminator checks, the vault PDA
+/// derivation, the `pool.treasury` equality check and the withdrawal-commitment recomputation each
+/// reject an account in the wrong slot — so this was a denial-of-service risk on the critical
+/// instruction rather than a theft risk. Naming the fields removes the class instead of relying on
+/// those checks to catch it, and costs nothing: `AccountInfo` is a handful of references, the
+/// caller was already cloning them into an array, and the compiler now rejects a mismatch.
+pub struct WithdrawAccounts<'info> {
+    pub pool: AccountInfo<'info>,
+    pub vault: AccountInfo<'info>,
+    pub nullifier_pda: AccountInfo<'info>,
+    pub recipient: AccountInfo<'info>,
+    pub treasury: AccountInfo<'info>,
+    pub relayer: AccountInfo<'info>,
+    pub system_program: AccountInfo<'info>,
+}
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawArgs {
@@ -78,21 +94,22 @@ pub struct WithdrawArgs {
 }
 
 /// Scan root_history to check if root is known.
-/// root_history starts at offset 136 (after discriminator) in the pool account data.
+///
+/// Reads the ring straight out of the account bytes rather than through `AccountLoader`, using
+/// the offsets pinned in `state.rs` (F-6). `Pool` is 8,968 bytes; deserialising it to check one
+/// root would cost the stack and the CU that the bare-metal path exists to avoid.
 fn is_known_root_in_account(pool_info: &AccountInfo, root: &[u8; 32]) -> Result<bool> {
     // Reject zero root — empty history slots are all zeros
     if root == &[0u8; 32] {
         return Ok(false);
     }
     let data = pool_info.try_borrow_data()?;
-    let d = &data[8..]; // skip discriminator
-    // root_history at offset 136, ROOT_HISTORY_SIZE entries of 32 bytes each
-    const ROOT_HISTORY_OFFSET: usize = 136;
-    if d.len() < ROOT_HISTORY_OFFSET + ROOT_HISTORY_SIZE * 32 {
+    let d = &data[DISCRIMINATOR_LEN..]; // skip discriminator
+    if d.len() < OFF_ROOT_HISTORY + ROOT_HISTORY_SIZE * 32 {
         return Err(error!(ErrorCode::InvalidPoolPda));
     }
     for i in 0..ROOT_HISTORY_SIZE {
-        let entry_start = ROOT_HISTORY_OFFSET + i * 32;
+        let entry_start = OFF_ROOT_HISTORY + i * 32;
         let entry = &d[entry_start..entry_start + 32];
         if entry == root.as_slice() {
             return Ok(true);
@@ -179,15 +196,15 @@ pub(crate) fn is_canonical_fr(be: &[u8; 32]) -> bool {
 
 pub fn process_withdraw(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: WithdrawAccounts,
     args: WithdrawArgs,
 ) -> Result<()> {
-    // 0. Verify sufficient accounts passed
-    crate::guard!(accounts.len() >= 7, ErrorCode::InvalidPoolPda);
-
-    // 0b. C-1: reject non-canonical public inputs BEFORE any other work.
-    //     Must precede the root scan, the double-spend check and proof verification,
-    //     so an aliased value can never reach a code path that consumes its bytes.
+    // 0. C-1: reject non-canonical public inputs BEFORE any other work.
+    //    Must precede the root scan, the double-spend check and proof verification,
+    //    so an aliased value can never reach a code path that consumes its bytes.
+    //
+    //    The arity check that used to stand here is gone with the index constants (F-7):
+    //    `WithdrawAccounts` cannot be constructed with a missing account.
     crate::guard!(
         is_canonical_fr(&args.nullifier_hash),
         ErrorCode::NonCanonicalPublicInput
@@ -198,22 +215,25 @@ pub fn process_withdraw(
         ErrorCode::NonCanonicalPublicInput
     );
 
-    let pool_info      = &accounts[IDX_POOL];
-    let vault_info     = &accounts[IDX_VAULT];
-    let nullifier_info = &accounts[IDX_NULLIFIER_PDA];
-    let recipient_info = &accounts[IDX_RECIPIENT];
-    let treasury_info  = &accounts[IDX_TREASURY];
-    let relayer_info   = &accounts[IDX_RELAYER];
-    let system_program = &accounts[IDX_SYSTEM_PROGRAM];
+    let pool_info      = &accounts.pool;
+    let vault_info     = &accounts.vault;
+    let nullifier_info = &accounts.nullifier_pda;
+    let recipient_info = &accounts.recipient;
+    let treasury_info  = &accounts.treasury;
+    let relayer_info   = &accounts.relayer;
+    let system_program = &accounts.system_program;
 
     // 1a. Verify pool is owned by this program
     crate::guard!(*pool_info.owner == *program_id, ErrorCode::InvalidPoolPda);
 
-    // 1b. Verify pool discriminator matches Pool struct
-    const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
+    // 1b. Verify pool discriminator matches Pool struct. The constant is pinned against
+    //     Anchor's derived value at compile time in state.rs (F-6).
     {
         let data = pool_info.try_borrow_data()?;
-        crate::guard!(data.len() >= 8 && data[..8] == POOL_DISCRIMINATOR, ErrorCode::InvalidPoolPda);
+        crate::guard!(
+            data.len() >= DISCRIMINATOR_LEN && data[..DISCRIMINATOR_LEN] == POOL_DISCRIMINATOR,
+            ErrorCode::InvalidPoolPda
+        );
     }
 
     // 1c. Verify system program
@@ -222,26 +242,25 @@ pub fn process_withdraw(
         ErrorCode::InvalidSystemProgram
     );
 
-    // 2. Read pool fields directly from account data (no stack allocation)
+    // 2. Read pool fields directly from account data (no stack allocation).
+    //    Offsets come from state.rs and are asserted against the struct at compile time (F-6),
+    //    so a field moving breaks the build rather than silently repointing these reads.
     let vault_bump: u8;
     let pool_treasury: Pubkey;
     let pool_denomination: u64;
 
     {
         let data = pool_info.try_borrow_data()?;
-        let d = &data[8..]; // skip 8-byte discriminator
-        if d.len() < 136 {
+        let d = &data[DISCRIMINATOR_LEN..]; // skip 8-byte discriminator
+        if d.len() < OFF_ROOT_HISTORY {
             return Err(error!(ErrorCode::InvalidPoolPda));
         }
-        // vault_bump at d[122]
-        vault_bump = d[122];
-        // treasury at d[88..120]
+        vault_bump = d[OFF_VAULT_BUMP];
         let mut treas_bytes = [0u8; 32];
-        treas_bytes.copy_from_slice(&d[88..120]);
+        treas_bytes.copy_from_slice(&d[OFF_TREASURY..OFF_TREASURY + 32]);
         pool_treasury = Pubkey::from(treas_bytes);
-        // denomination at d[64..72]
         let mut denom_bytes = [0u8; 8];
-        denom_bytes.copy_from_slice(&d[64..72]);
+        denom_bytes.copy_from_slice(&d[OFF_DENOMINATION..OFF_DENOMINATION + 8]);
         pool_denomination = u64::from_le_bytes(denom_bytes);
     }
 
@@ -262,6 +281,66 @@ pub fn process_withdraw(
     // hundred CU instead of ~100k.
     let (treasury_fee, _, user_amount) =
         compute_fee_split(pool_denomination, args.relayer_fee_taken, args.relayer_fee_max)?;
+
+    // 2c. Account distinctness (M-2, F-5, SEC-06).
+    //
+    // Seven public-key comparisons, and they used to sit after Groth16 verification. That is the
+    // wrong way round by the same argument the fee checks above are made early: these are the
+    // cheapest checks in the instruction and they were gated behind its most expensive operation, so
+    // a request with an unusable account set paid ~100k CU to be told so. They depend only on the
+    // keys that were passed, all of which are available here.
+    //
+    // Comparing against the vault key before step 3 has validated it is sound: if a forged vault is
+    // passed, step 3 rejects it regardless, and if the real vault is passed these comparisons see
+    // the real vault.
+    //
+    // The vault must not also be the recipient, treasury or relayer: those cases
+    // would net lamports back into the vault and make the conservation check below
+    // meaningless. Duplicate AccountInfos share a lamport cell, so this cannot be
+    // caught after the fact by arithmetic alone.
+    crate::guard!(*recipient_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
+
+    // No payout target may be the nullifier PDA either (F-5). This program creates that
+    // account moments later, so crediting it locks the funds permanently: the account ends
+    // up program-owned with no instruction that can move lamports out of it.
+    //
+    // The treasury case is the one reachable by someone other than the payee. A pool
+    // creator can set `treasury` to the PDA that a chosen nullifier hash will later occupy
+    // — it is system-owned and empty at creation, so the SystemAccount constraint accepts
+    // it — and every withdrawal spending that note would burn the protocol fee. The
+    // recipient and relayer cases are self-inflicted, but the check costs one comparison
+    // each and removes the whole class.
+    //
+    // Note `is_on_curve()` cannot be used to reject PDAs generally: it is
+    // `unimplemented!()` under target_os = "solana" and panics on-chain.
+    crate::guard!(*treasury_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*recipient_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+    crate::guard!(*relayer_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
+
+    // Nor may the recipient be the pool state account (SEC-06). The pool is program-owned and no
+    // instruction moves lamports out of it, so crediting it is the same irreversible burn as
+    // crediting the nullifier PDA above — the funds are simply gone.
+    //
+    // Unlike the aliases above this one is self-inflicted: `recipient` is bound inside the
+    // withdrawal commitment, so only the person who generated the proof can put the pool address
+    // there. It is guarded anyway for the same reason the F-5 checks are. Paying a fresh address
+    // that turns out to be wrong at least leaves open the possibility that someone holds its key;
+    // paying this address is provably unrecoverable, and the pool address is exactly the kind of
+    // value a user copies from an explorer or a misconfigured integration pastes by mistake. One
+    // comparison removes the whole class.
+    //
+    // The treasury and relayer variants are NOT guarded because neither is reachable:
+    //
+    //   - treasury: validated as a `SystemAccount` in `initialize_pool`, and by the time that
+    //     constraint runs the pool has already been created by `init` and is program-owned, so a
+    //     pool address is rejected there and can never be stored as a pool's treasury.
+    //   - relayer: must be a transaction signer, and the pool is a PDA with no private key.
+    //
+    // Adding guards for those would assert conditions the type system and runtime already
+    // guarantee, which reads as though a real path had been closed.
+    crate::guard!(*recipient_info.key != *pool_info.key, ErrorCode::DuplicateAccount);
 
     // 3. Verify vault PDA
     let expected_vault = Pubkey::create_program_address(
@@ -320,33 +399,6 @@ pub fn process_withdraw(
         &[&relayer_field, &fee_max_bytes, &recipient_field],
     ).map_err(|_| error!(ErrorCode::PoseidonFailed))?.0;
     crate::guard!(computed_commitment == args.withdrawal_commitment, ErrorCode::InvalidWithdrawalCommitment);
-
-    // 12. Account distinctness (M-2).
-    //
-    // The vault must not also be the recipient, treasury or relayer: those cases
-    // would net lamports back into the vault and make the conservation check below
-    // meaningless. Duplicate AccountInfos share a lamport cell, so this cannot be
-    // caught after the fact by arithmetic alone.
-    crate::guard!(*recipient_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
-    crate::guard!(*treasury_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
-    crate::guard!(*relayer_info.key != *vault_info.key, ErrorCode::DuplicateAccount);
-
-    // No payout target may be the nullifier PDA either (F-5). This program creates that
-    // account moments later, so crediting it locks the funds permanently: the account ends
-    // up program-owned with no instruction that can move lamports out of it.
-    //
-    // The treasury case is the one reachable by someone other than the payee. A pool
-    // creator can set `treasury` to the PDA that a chosen nullifier hash will later occupy
-    // — it is system-owned and empty at creation, so the SystemAccount constraint accepts
-    // it — and every withdrawal spending that note would burn the protocol fee. The
-    // recipient and relayer cases are self-inflicted, but the check costs one comparison
-    // each and removes the whole class.
-    //
-    // Note `is_on_curve()` cannot be used to reject PDAs generally: it is
-    // `unimplemented!()` under target_os = "solana" and panics on-chain.
-    crate::guard!(*treasury_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
-    crate::guard!(*recipient_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
-    crate::guard!(*relayer_info.key != *nullifier_info.key, ErrorCode::DuplicateAccount);
 
     // 13. Create nullifier PDA via System Program CPI (H-1)
     //
@@ -444,7 +496,23 @@ pub fn process_withdraw(
     drop(nullifier_data);
 
     // 15. Direct lamport mutation for SOL transfers (vault is program-owned PDA)
-    crate::guard!(vault_info.lamports() >= pool_denomination, ErrorCode::InsufficientVaultBalance);
+    //
+    // The guard is `denomination + vault rent`, not just `denomination` (F-8). The vault only ever
+    // holds `rent + (deposits - withdrawals) * denomination`, so with at least one live deposit the
+    // stronger form is already satisfied and this rejects nothing that used to pass — I could not
+    // construct a state where the two differ. It is asserted rather than inferred because the
+    // invariant that makes them equivalent lives in `deposit`, not here: debiting a program-owned
+    // account below its rent floor would be caught by the runtime as a whole-transaction failure
+    // with no indication of the cause, and this file already re-checks things it could infer
+    // (the relayer signature, the nullifier account's owner) for the same reason.
+    let vault_rent_floor = rent.minimum_balance(vault_info.data_len());
+    let vault_required = pool_denomination
+        .checked_add(vault_rent_floor)
+        .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
+    crate::guard!(
+        vault_info.lamports() >= vault_required,
+        ErrorCode::InsufficientVaultBalance
+    );
 
     // Snapshot for the conservation check below (M-2). The previous "fee invariant"
     // asserted treasury_fee + relayer_fee_taken + user_amount == denomination
