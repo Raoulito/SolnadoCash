@@ -10,6 +10,7 @@
 // the rate limit — and the on-chain failure is far less legible to the user than a
 // specific error here.
 
+import { PublicKey } from "@solana/web3.js";
 import { buildPoseidon } from "circomlibjs";
 
 const ROOT_HISTORY_SIZE = 256;
@@ -53,6 +54,14 @@ export function readRootHistory(poolData) {
 }
 
 /**
+ * Convert a decimal field-element string into the 32-byte big-endian form used as a PDA seed.
+ * Must match `bigIntToBytes32` in tx.js and `args.nullifier_hash` on-chain.
+ */
+function fieldToBytes32(decimal) {
+  return Buffer.from(BigInt(decimal).toString(16).padStart(64, "0"), "hex");
+}
+
+/**
  * Check that a submission can actually succeed on-chain.
  *
  * @returns {Promise<{ok: true} | {ok: false, error: string, message: string}>}
@@ -63,8 +72,12 @@ export async function preflight({
   relayerPubkey,
   recipientPubkey,
   relayerFeeMax,
+  // Required for the spent-note check (SEC-05). api.js always supplies all three.
+  connection,
+  programId,
+  poolPubkey,
 }) {
-  const [, rootStr, wcStr] = publicSignals;
+  const [nullifierStr, rootStr, wcStr] = publicSignals;
 
   // 1. The root must be in the pool's on-chain history, or the program rejects
   //    the withdrawal with RootNotFound.
@@ -96,6 +109,52 @@ export async function preflight({
         "The withdrawal commitment does not match this relayer, fee ceiling and " +
         "recipient. Request a fee quote from this relayer and prove against it.",
     };
+  }
+
+  // 3. SEC-05: the note must not already be spent on-chain.
+  //
+  // A spent proof stays valid arithmetic forever, and its root remains in the 256-entry ring for as
+  // long as it takes 256 further deposits to rotate out. Anyone can lift a completed withdrawal's
+  // payload off the chain and resubmit it. Checks 1 and 2 both pass for such a replay — the root is
+  // still live and the commitment still names this relayer — so without this step the request went
+  // on to the Groth16 pairing check, which is the single most expensive thing the relayer does and
+  // runs on the same thread as everything else. Enough concurrent replays starve honest requests,
+  // and each one that clears verification also costs a doomed transaction's fees.
+  //
+  // The condition mirrors the program exactly: on-chain the guard is `data_is_empty()`, and a PDA
+  // holding lamports but no data is deliberately NOT treated as spent, because pre-funding it is a
+  // griefing vector the withdrawal path already absorbs by allocating and assigning explicitly
+  // (H-1). Rejecting on mere existence here would hand that griefing vector straight back, one layer
+  // up, where the program's defence cannot reach it.
+  //
+  // Ordering: this is the last check in preflight because it is the only one that needs the network.
+  // The two above are local, so obviously-malformed traffic is rejected without an RPC round trip.
+  if (connection && programId && poolPubkey) {
+    let nullifierAccount;
+    try {
+      const [nullifierPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("nullifier"), poolPubkey.toBytes(), fieldToBytes32(nullifierStr)],
+        programId
+      );
+      nullifierAccount = await connection.getAccountInfo(nullifierPda);
+    } catch {
+      // Deliberately fail OPEN. This check is a cost and liveness optimisation, not a security
+      // boundary: the program enforces double-spending regardless, so a proof that gets past a
+      // failed lookup still cannot spend a note twice. Failing closed would convert an RPC hiccup
+      // into a total withdrawal outage — a self-inflicted denial of service strictly worse than the
+      // one being defended against.
+      return { ok: true };
+    }
+
+    if (nullifierAccount !== null && nullifierAccount.data.length > 0) {
+      return {
+        ok: false,
+        error: "NullifierSpent",
+        message:
+          "This note has already been withdrawn. Its nullifier is recorded on-chain, " +
+          "so no further withdrawal against it can succeed.",
+      };
+    }
   }
 
   return { ok: true };

@@ -2,7 +2,7 @@
 // M-4 — pre-flight validation against on-chain state.
 
 import { strict as assert } from "node:assert";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { buildPoseidon } from "circomlibjs";
 import { preflight, pubkeyToField, readRootHistory } from "../src/preflight.js";
 
@@ -17,6 +17,29 @@ function makePoolData(roots = new Map()) {
   }
   return d;
 }
+
+const PROGRAM_ID = new PublicKey("DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59");
+const POOL_PUBKEY = Keypair.generate().publicKey;
+
+/**
+ * Connection stub for the SEC-05 spent-note check.
+ *
+ * `data` mirrors the on-chain condition: the program's guard is `data_is_empty()`, so an account
+ * holding lamports with zero data is NOT spent.
+ */
+function stubConnection(account) {
+  return {
+    calls: 0,
+    async getAccountInfo() {
+      this.calls++;
+      if (account === "throw") throw new Error("RPC 429");
+      return account;
+    },
+  };
+}
+
+const spentAccount = { lamports: 1_447_680, data: Buffer.alloc(80), owner: PROGRAM_ID };
+const preFundedOnly = { lamports: 890_880, data: Buffer.alloc(0), owner: PROGRAM_ID };
 
 describe("M-4 — relayer preflight", function () {
   this.timeout(30_000);
@@ -153,5 +176,99 @@ describe("M-4 — relayer preflight", function () {
     assert.equal(roots.length, 256);
     assert.equal(roots[255], 42n);
     assert.equal(roots[0], 0n);
+  });
+
+  // ── SEC-05 ────────────────────────────────────────────────────────────────────
+  //
+  // A spent proof stays valid arithmetic forever and its root lingers in the 256-entry ring, so a
+  // completed withdrawal's payload can be lifted off the chain and replayed. Checks 1 and 2 both pass
+  // for a replay, which sent it on to the Groth16 pairing check — the most expensive operation the
+  // relayer performs, on the same thread as everything else.
+
+  it("SEC-05: rejects a note already spent on-chain", async () => {
+    const root = 12345n;
+    const wc = await goodCommitment();
+    const conn = stubConnection(spentAccount);
+    const r = await preflight({
+      poolData: makePoolData(new Map([[7, root]])),
+      publicSignals: ["999", root.toString(), wc.toString()],
+      relayerPubkey: relayer,
+      recipientPubkey: recipient,
+      relayerFeeMax: FEE_MAX,
+      connection: conn,
+      programId: PROGRAM_ID,
+      poolPubkey: POOL_PUBKEY,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "NullifierSpent");
+    assert.equal(conn.calls, 1, "must actually query the chain");
+  });
+
+  it("SEC-05: accepts an unspent note", async () => {
+    const root = 12345n;
+    const wc = await goodCommitment();
+    const r = await preflight({
+      poolData: makePoolData(new Map([[7, root]])),
+      publicSignals: ["999", root.toString(), wc.toString()],
+      relayerPubkey: relayer,
+      recipientPubkey: recipient,
+      relayerFeeMax: FEE_MAX,
+      connection: stubConnection(null),
+      programId: PROGRAM_ID,
+      poolPubkey: POOL_PUBKEY,
+    });
+    assert.equal(r.ok, true);
+  });
+
+  // This is the case that makes the check match the program rather than merely resemble it.
+  it("SEC-05: a pre-funded PDA with no data is NOT spent (H-1 griefing must not resurface)", async () => {
+    const root = 12345n;
+    const wc = await goodCommitment();
+    const r = await preflight({
+      poolData: makePoolData(new Map([[7, root]])),
+      publicSignals: ["999", root.toString(), wc.toString()],
+      relayerPubkey: relayer,
+      recipientPubkey: recipient,
+      relayerFeeMax: FEE_MAX,
+      connection: stubConnection(preFundedOnly),
+      programId: PROGRAM_ID,
+      poolPubkey: POOL_PUBKEY,
+    });
+    assert.equal(r.ok, true, "lamports without data must not read as spent");
+  });
+
+  it("SEC-05: fails OPEN when the RPC lookup errors", async () => {
+    // The program enforces double-spending regardless, so a failed lookup must not become a
+    // withdrawal outage — that would be a worse denial of service than the one being prevented.
+    const root = 12345n;
+    const wc = await goodCommitment();
+    const r = await preflight({
+      poolData: makePoolData(new Map([[7, root]])),
+      publicSignals: ["999", root.toString(), wc.toString()],
+      relayerPubkey: relayer,
+      recipientPubkey: recipient,
+      relayerFeeMax: FEE_MAX,
+      connection: stubConnection("throw"),
+      programId: PROGRAM_ID,
+      poolPubkey: POOL_PUBKEY,
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it("SEC-05: does not query the chain when a cheaper local check already failed", async () => {
+    // The nullifier check is last precisely so malformed traffic costs no RPC round trip.
+    const conn = stubConnection(spentAccount);
+    const r = await preflight({
+      poolData: makePoolData(new Map([[7, 12345n]])),
+      publicSignals: ["999", "88888", "1"], // stale root
+      relayerPubkey: relayer,
+      recipientPubkey: recipient,
+      relayerFeeMax: FEE_MAX,
+      connection: conn,
+      programId: PROGRAM_ID,
+      poolPubkey: POOL_PUBKEY,
+    });
+    assert.equal(r.error, "StaleRoot");
+    assert.equal(conn.calls, 0);
   });
 });

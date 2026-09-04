@@ -316,6 +316,10 @@ export function createApp({ connection, relayerKeypair, programId }) {
         relayerPubkey: relayerKeypair.publicKey,
         recipientPubkey,
         relayerFeeMax: feeMax,
+        // SEC-05: lets preflight reject an already-spent note before the pairing check.
+        connection,
+        programId,
+        poolPubkey,
       });
       if (!pf.ok) {
         return res.status(400).json({ error: pf.error, message: pf.message });
