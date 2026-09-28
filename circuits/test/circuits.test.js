@@ -48,6 +48,13 @@ beforeAll(async () => {
     F = poseidon.F;
 }, 30_000);
 
+// snarkjs keeps a worker pool alive on this global after proving. Without terminating it jest never
+// exits, so `npm test` passed every test and then hung until something killed it, which a CI job or
+// any timeout reports as a failure.
+afterAll(async () => {
+    if (globalThis.curve_bn128) await globalThis.curve_bn128.terminate();
+});
+
 // ── Poseidon helper — returns BigInt ─────────────────────────────────────────
 function poseidonHash(...inputs) {
     const result = poseidon(inputs.map(x => F.e(x)));
