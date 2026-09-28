@@ -51,9 +51,12 @@ import type { Solnadocash } from "../target/types/solnadocash";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const BUILD_DIR = path.join(__dirname, "../circuits/build");
-const WITHDRAW_WASM = path.join(BUILD_DIR, "withdraw_js/withdraw.wasm");
-const WITHDRAW_ZKEY = path.join(BUILD_DIR, "withdraw_final.zkey");
+// Tracked copies, identical to circuits/build and pinned to the deployed verifier by
+// app/src/circuitArtifacts.test.ts. circuits/build is gitignored, so on a clean clone these
+// files were missing and every proof-generating test here failed before reaching the program.
+const CIRCUITS_DIR = path.join(__dirname, "../app/public/circuits");
+const WITHDRAW_WASM = path.join(CIRCUITS_DIR, "withdraw.wasm");
+const WITHDRAW_ZKEY = path.join(CIRCUITS_DIR, "withdraw_final.zkey");
 
 const DENOMINATION = 1_000_000_000n;
 const TREE_DEPTH = 20;
