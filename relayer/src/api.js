@@ -228,7 +228,30 @@ export function createApp({ connection, relayerKeypair, programId }) {
   });
 
   // ── POST /submit_proof ───────────────────────────────────────────────────────
+  // L-2: the guard is taken HERE, before the handler awaits anything, and released in `finally`
+  // whatever the outcome. It used to be checked on arrival but only taken after the pool load, the
+  // fee RPCs, preflight and proof verification, so parallel submissions of one note all passed the
+  // check and were all signed and sent: one lands, the rest revert, and the relayer pays for each.
+  // It is keyed on the canonical field element, so "5", "05" and "0x5" are one note, as they are to
+  // snarkjs and the program. Requests whose nullifier is not a field element are not guarded; they
+  // fail validation below before anything is sent.
   app.post("/submit_proof", submitLimiter, nullifierLimiter, async (req, res) => {
+    const pendingKey = nullifierKey(req.body?.publicSignals?.[0]);
+    const guarded = pendingKey !== "invalid";
+    if (guarded) {
+      if (pendingNullifiers.has(pendingKey)) {
+        return res.status(409).json({ error: "NullifierPending" });
+      }
+      pendingNullifiers.add(pendingKey);
+    }
+    try {
+      await handleSubmit(req, res);
+    } finally {
+      if (guarded) pendingNullifiers.delete(pendingKey);
+    }
+  });
+
+  async function handleSubmit(req, res) {
     try {
       const { proof, publicSignals, poolAddress, recipient, relayerFeeMax } =
         req.body;
@@ -266,14 +289,6 @@ export function createApp({ connection, relayerKeypair, programId }) {
         recipientPubkey = new PublicKey(recipient);
       } catch {
         return res.status(400).json({ error: "InvalidAddress" });
-      }
-
-      // Check nullifier not already pending
-      const nullifierHex = publicSignals[0];
-      if (pendingNullifiers.has(nullifierHex)) {
-        return res
-          .status(409)
-          .json({ error: "NullifierPending" });
       }
 
       // Read treasury from pool account
@@ -406,10 +421,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
         return res.status(400).json({ error: "InvalidProof" });
       }
 
-      // Mark nullifier as pending
-      pendingNullifiers.add(nullifierHex);
-
-      try {
+      {
         const txSignature = await submitWithdraw({
           connection,
           relayerKeypair,
@@ -428,8 +440,6 @@ export function createApp({ connection, relayerKeypair, programId }) {
           txSignature,
           feeTaken: actualFee.toString(),
         });
-      } finally {
-        pendingNullifiers.delete(nullifierHex);
       }
     } catch (err) {
       const msg = err.message || "";
@@ -494,7 +504,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
       // Fallback — include message so frontend can display useful info
       res.status(500).json({ error: "InternalError", message: msg });
     }
-  });
+  }
 
   return app;
 }
