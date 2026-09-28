@@ -58,6 +58,61 @@ function isWalletOriginRejection(err: unknown): boolean {
   return code === 4001;
 }
 
+/**
+ * Does this send error prove the transaction was never broadcast? (L-5)
+ *
+ * Only a failed preflight simulation does: the RPC refused the transaction before sending it, so it
+ * cannot land. web3.js raises that as SendTransactionError with action 'simulate', whose message
+ * starts "Simulation failed"; a sign-only wallet's adapter wraps it unchanged. Anything else, including
+ * rejection-looking or simulation-looking TEXT, proves nothing, because the transaction may be in
+ * flight.
+ */
+export function provesNotBroadcast(err: unknown): boolean {
+  const e =
+    err && typeof err === 'object' && (err as { name?: unknown }).name === 'WalletSendTransactionError'
+      ? (err as { error?: unknown }).error
+      : err;
+  return e instanceof SendTransactionError && /^Simulation failed/.test(e.message);
+}
+
+/**
+ * May the user move on to confirming a deposit? (L-5)
+ *
+ * Requires the pool to have been READ successfully, not merely to lack a paused or saturated flag:
+ * the flags are absent when the read failed, which used to leave Continue enabled for a pool the app
+ * knew nothing about.
+ */
+/** The program logs carried by a failed simulation, however the wallet adapter wrapped it. */
+export function simulationLogs(err: unknown): string[] {
+  const e =
+    err && typeof err === 'object' && (err as { name?: unknown }).name === 'WalletSendTransactionError'
+      ? (err as { error?: unknown }).error
+      : err;
+  return e instanceof SendTransactionError && Array.isArray(e.transactionError.logs)
+    ? e.transactionError.logs
+    : [];
+}
+
+export function depositCanContinue(s: {
+  poolAddress: string | undefined;
+  poolLoading: boolean;
+  poolError: string | null;
+  poolInfo: { isPaused: boolean; isSaturated: boolean } | null;
+  clusterAllowed: boolean;
+  walletBlock: string | null;
+}): boolean {
+  return Boolean(
+    s.poolAddress &&
+      !s.poolLoading &&
+      s.poolError === null &&
+      s.poolInfo !== null &&
+      !s.poolInfo.isPaused &&
+      !s.poolInfo.isSaturated &&
+      s.clusterAllowed &&
+      s.walletBlock === null
+  );
+}
+
 interface DepositProps {
   onGoToWithdraw: () => void;
   onNoteLock: (locked: boolean) => void;
@@ -85,7 +140,11 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   const [confirmUnknown, setConfirmUnknown] = useState(false);
 
   // T42: Pool saturation check
-  const { info: poolInfo, loading: poolLoading } = usePoolInfo(pool?.address || null);
+  const {
+    info: poolInfo,
+    loading: poolLoading,
+    error: poolError,
+  } = usePoolInfo(pool?.address || null);
 
   // Lock navigation while note is displayed
   useEffect(() => {
@@ -141,13 +200,14 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
   if (step === 'select') {
     // walletBlock included so the user is stopped at the first screen where the denomination is
     // known, rather than after moving to the confirm step.
-    const canContinue =
-      pool &&
-      pool.address &&
-      !poolInfo?.isPaused &&
-      !poolInfo?.isSaturated &&
-      clusterState.status === 'allowed' &&
-      walletBlock === null;
+    const canContinue = depositCanContinue({
+      poolAddress: pool?.address,
+      poolLoading,
+      poolError,
+      poolInfo,
+      clusterAllowed: clusterState.status === 'allowed',
+      walletBlock,
+    });
 
     return (
       <div className="space-y-6">
@@ -220,6 +280,12 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
               Deposits are paused by the admin. Withdrawals are always available.
             </p>
           </div>
+        )}
+
+        {poolError && pool?.address && (
+          <p className="text-red-400 text-xs text-center" role="alert">
+            This pool could not be read ({poolError}), so depositing is disabled.
+          </p>
         )}
 
         {poolLoading && pool?.address && (
@@ -343,6 +409,13 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
             setSecretNote('');
             throw sendErr;
           }
+          // L-5: a failed preflight simulation proves the RPC refused the transaction before
+          // broadcasting it, so it cannot land. Report the real reason instead of "probably sent".
+          // The note is kept regardless: keeping a note costs nothing.
+          if (provesNotBroadcast(sendErr)) {
+            setSecretNote('');
+            throw sendErr;
+          }
           // Ambiguous failure. sendTransaction both signs AND submits, so the deposit may well
           // have landed: wallets throw "Unexpected error" for their own internal reasons after the
           // transaction is already on the network. Observed live, with the deposit confirmed
@@ -377,18 +450,24 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
         setStep('note');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Transaction failed';
+        // L-5: a failed simulation names its cause in the program logs, not the message, so the
+        // mapping below reads both. Before, it could never match: every send failure was diverted to
+        // "probably sent" first.
+        const reason = `${msg} ${simulationLogs(err).join(' ')}`;
         if (err instanceof ClusterBlockedError || err instanceof WalletNotOnClusterError) {
           // Nothing was generated, staged or sent, so report it plainly instead of falling through
           // to the "your note has been saved" wording below, which would be false here.
           setError(msg);
         } else if (isWalletRejection(err)) {
           setError('Transaction cancelled.');
-        } else if (msg.includes('insufficient') || msg.includes('not enough')) {
+        } else if (reason.includes('insufficient') || reason.includes('not enough')) {
           setError('Not enough SOL in your wallet.');
-        } else if (msg.includes('PoolPaused')) {
+        } else if (reason.includes('PoolPaused')) {
           setError('This pool is currently paused by the admin.');
-        } else if (msg.includes('PoolSaturated') || msg.includes('TreeFull')) {
+        } else if (reason.includes('PoolSaturated') || reason.includes('TreeFull')) {
           setError('This pool is full. Try a different denomination.');
+        } else if (provesNotBroadcast(err)) {
+          setError(`The deposit was rejected before it was sent, so nothing left your wallet.\n\n${msg}`);
         } else {
           // The note is still in storage at this point and may correspond to a deposit that
           // landed, so do not imply the attempt simply failed.
