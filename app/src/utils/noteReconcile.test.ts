@@ -1,8 +1,8 @@
 // app/src/utils/noteReconcile.test.ts
 //
 // The asymmetry is the whole point: keeping a worthless note is a UX annoyance, discarding a real
-// one loses the deposit forever. So these tests care much more about the cases where it must NOT
-// discard than the case where it should.
+// one loses the deposit forever. Reconciliation therefore never discards at all (H-4); these tests
+// pin that, and that a note is marked confirmed only when its leaf is found.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
@@ -87,13 +87,14 @@ describe('reconcilePendingNotes', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('discards a note whose commitment is absent from a verified tree', async () => {
+  it('reports, but KEEPS, a note whose commitment is absent from a verified tree (H-4)', async () => {
     stageAged(NOTE, OLD);
     hasLeaf.mockReturnValue(false);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(1);
-    expect(pendingNotes()).toHaveLength(0);
+    expect(r.notFound).toBe(1);
+    expect(pendingNotes()).toHaveLength(1);
+    expect(pendingNotes()[0].status).toBe('sent');
   });
 
   it('keeps and confirms a note whose deposit did land', async () => {
@@ -112,7 +113,7 @@ describe('reconcilePendingNotes', () => {
 
     const r = await reconcilePendingNotes(fakeConnection);
     expect(r.unresolved).toBe(1);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(pendingNotes()).toHaveLength(1);
   });
 
@@ -122,7 +123,7 @@ describe('reconcilePendingNotes', () => {
     rebuild.mockRejectedValue(new Error('Merkle tree is incomplete: recovered 2 of 5 deposits'));
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(pendingNotes()).toHaveLength(1);
   });
 
@@ -132,7 +133,7 @@ describe('reconcilePendingNotes', () => {
 
     const r = await reconcilePendingNotes(fakeConnection);
     expect(r.unresolved).toBe(1);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(pendingNotes()).toHaveLength(1);
     expect(rebuild).not.toHaveBeenCalled();
   });
@@ -142,11 +143,11 @@ describe('reconcilePendingNotes', () => {
     hasLeaf.mockReturnValue(false);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(pendingNotes()).toHaveLength(1);
   });
 
-  it('handles a mix, judging each note independently', async () => {
+  it('handles a mix, judging each note independently and keeping both', async () => {
     const landed = `sndo_${POOL}_0000000005f5e100_${'cd'.repeat(64)}`;
     stageAged(NOTE, OLD);
     stageAged(landed, OLD);
@@ -154,13 +155,14 @@ describe('reconcilePendingNotes', () => {
     hasLeaf.mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded + r.confirmed).toBe(2);
-    expect(pendingNotes()).toHaveLength(1);
+    expect(r.notFound).toBe(1);
+    expect(r.confirmed).toBe(1);
+    expect(pendingNotes()).toHaveLength(2);
   });
 
   it('does nothing, and touches no RPC, when there are no notes', async () => {
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r).toEqual({ confirmed: 0, discarded: 0, unresolved: 0 });
+    expect(r).toEqual({ confirmed: 0, notFound: 0, unresolved: 0 });
     expect(rebuild).not.toHaveBeenCalled();
   });
 
@@ -179,7 +181,7 @@ describe('reconcilePendingNotes', () => {
     hasLeaf.mockReturnValue(false); // chain is complete and the commitment is absent
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(r.unresolved).toBe(1);
     expect(pendingNotes()).toHaveLength(1);
   });
@@ -196,7 +198,7 @@ describe('reconcilePendingNotes', () => {
     hasLeaf.mockReturnValue(false);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(r.unresolved).toBe(1);
     expect(pendingNotes()).toHaveLength(1);
   });
@@ -206,19 +208,47 @@ describe('reconcilePendingNotes', () => {
     hasLeaf.mockReturnValue(false);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(0);
+    expect(r.notFound).toBe(0);
     expect(r.unresolved).toBe(1);
     expect(pendingNotes()).toHaveLength(1);
   });
 
-  it('still discards a note broadcast long ago and provably absent', async () => {
-    // The behaviour the feature exists for must survive the fix: once the blockhash has expired a
-    // broadcast deposit can no longer land, so a negative answer is final.
+  // ── H-4 ───────────────────────────────────────────────────────────────────────
+  //
+  // A "verified" tree is only verified against what the same RPC says the pool holds. A lying
+  // endpoint serving an empty pool, or an honest one a few minutes behind, produces a consistent
+  // tree without the deposit, and the note, the only key to the funds, used to be deleted on page
+  // load. These must hold whatever the RPC says.
+
+  it('H-4: NEVER deletes a note broadcast long ago and absent from a verified tree', async () => {
     stageSent(NOTE, OLD, OLD);
     hasLeaf.mockReturnValue(false);
 
     const r = await reconcilePendingNotes(fakeConnection);
-    expect(r.discarded).toBe(1);
-    expect(pendingNotes()).toHaveLength(0);
+    expect(r.notFound).toBe(1);
+    expect(pendingNotes()).toHaveLength(1);
+    expect(pendingNotes()[0].note).toBe(NOTE);
+  });
+
+  it('H-4: NEVER re-judges a note already seen confirmed, and reads no chain for it', async () => {
+    stageSent(NOTE, OLD, OLD);
+    patch(NOTE, { status: 'confirmed' });
+    hasLeaf.mockReturnValue(false); // what a lying or lagging RPC would say
+
+    const r = await reconcilePendingNotes(fakeConnection);
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(r).toEqual({ confirmed: 0, notFound: 0, unresolved: 0 });
+    expect(pendingNotes()).toHaveLength(1);
+    expect(pendingNotes()[0].status).toBe('confirmed');
+  });
+
+  it('H-4: repeated passes against a lying RPC still delete nothing', async () => {
+    const other = `sndo_${POOL}_0000000005f5e100_${'ef'.repeat(64)}`;
+    stageSent(NOTE, OLD, OLD);
+    stageSent(other, OLD, OLD);
+    hasLeaf.mockReturnValue(false);
+
+    for (let i = 0; i < 3; i++) await reconcilePendingNotes(fakeConnection);
+    expect(pendingNotes().map((n) => n.note).sort()).toEqual([NOTE, other].sort());
   });
 });
