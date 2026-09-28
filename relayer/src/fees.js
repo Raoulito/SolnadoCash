@@ -22,12 +22,21 @@ const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000; // getRecentPrioritizationFees uni
  * which is also the unit `ComputeBudgetProgram.setComputeUnitPrice` expects — so
  * this value is passed straight to the transaction builder.
  *
+ * L-9: scoped to `writableAccounts`. Called without accounts, the RPC reports the minimum fee that
+ * landed a transaction in each slot, which is 0 whenever anything got in for free: measured on
+ * mainnet, all 150 slots were 0 while the same query for a contended writable account was non-zero
+ * in 135 of 150 (p90 12,810 uL/CU). Priority is decided per write lock, so the estimate must be for
+ * the accounts a withdrawal locks: the pool's vault and the relayer.
+ *
  * @param {import("@solana/web3.js").Connection} connection
+ * @param {import("@solana/web3.js").PublicKey[]} writableAccounts - accounts the transaction write-locks
  * @returns {Promise<number>} micro-lamports per compute unit
  */
-export async function getPriorityFeePerCU(connection) {
+export async function getPriorityFeePerCU(connection, writableAccounts) {
   try {
-    const fees = await connection.getRecentPrioritizationFees();
+    const fees = await connection.getRecentPrioritizationFees(
+      writableAccounts?.length ? { lockedWritableAccounts: writableAccounts } : undefined
+    );
     if (!fees || fees.length === 0) return 0;
     // 90th percentile of recent priority fees (conservative estimate)
     const sorted = fees.map((f) => f.prioritizationFee).sort((a, b) => a - b);
@@ -162,8 +171,8 @@ export function planFee({ feeMax, rent, estimatedPriorityPerCU }) {
  * @param {import("@solana/web3.js").Connection} connection
  * @returns {Promise<number>} lamports
  */
-export async function computeRelayerCost(connection) {
-  const priorityFeePerCU = await getPriorityFeePerCU(connection);
+export async function computeRelayerCost(connection, writableAccounts) {
+  const priorityFeePerCU = await getPriorityFeePerCU(connection, writableAccounts);
   const rent = await getNullifierRent(connection);
   return BASE_FEE + priorityFeeLamports(priorityFeePerCU) + rent;
 }
@@ -176,8 +185,8 @@ export async function computeRelayerCost(connection) {
  * @param {import("@solana/web3.js").Connection} connection - Solana RPC connection
  * @returns {Promise<number>} relayerFeeMax in lamports
  */
-export async function computeRelayerFeeMax(connection) {
-  const gasCost = await computeRelayerCost(connection);
+export async function computeRelayerFeeMax(connection, writableAccounts) {
+  const gasCost = await computeRelayerCost(connection, writableAccounts);
   return Math.ceil(gasCost * MARGIN);
 }
 

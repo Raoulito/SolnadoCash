@@ -22,7 +22,7 @@ import {
   planFee,
 } from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
-import { submitWithdraw } from "./tx.js";
+import { findVaultPda, submitWithdraw } from "./tx.js";
 import { preflight } from "./preflight.js";
 import { loadPool } from "./pool.js";
 import { nullifierKey, rateLimitKey } from "./ratelimit.js";
@@ -181,7 +181,10 @@ export function createApp({ connection, relayerKeypair, programId }) {
       }
       const denomination = pool.denomination;
 
-      const relayerCost = await computeRelayerCost(connection);
+      // L-9: estimate priority for the accounts a withdrawal from this pool write-locks.
+      const [vault] = findVaultPda(poolPubkey, programId);
+      const writable = [vault, relayerKeypair.publicKey];
+      const relayerCost = await computeRelayerCost(connection, writable);
       const treasuryFee = computeTreasuryFee(denomination);
 
       // The on-chain cap is denomination/50 (2%). The dominant relayer cost — the
@@ -207,7 +210,7 @@ export function createApp({ connection, relayerKeypair, programId }) {
         });
       }
 
-      const withMargin = BigInt(await computeRelayerFeeMax(connection));
+      const withMargin = BigInt(await computeRelayerFeeMax(connection, writable));
       const relayerFeeMax = withMargin <= onChainCap ? withMargin : onChainCap;
       const estimatedUserReceives = computeMinUserReceives(
         denomination,
@@ -340,7 +343,11 @@ export function createApp({ connection, relayerKeypair, programId }) {
       // Compute the fee to take. An honest relayer charges its REAL cost, not the
       // ceiling the user agreed to (H-3): relayerFeeMax exists to absorb fee
       // movement between quote and submission, not to be claimed in full.
-      const estimatedPriorityPerCU = await getPriorityFeePerCU(connection);
+      // L-9: scoped to the accounts this withdrawal write-locks, as the quote was.
+      const estimatedPriorityPerCU = await getPriorityFeePerCU(connection, [
+        findVaultPda(poolPubkey, programId)[0],
+        relayerKeypair.publicKey,
+      ]);
 
       // planFee caps the priority fee by what the ceiling can actually reimburse. Clamping only
       // the CHARGE while still attaching the full estimate meant the relayer silently paid the
