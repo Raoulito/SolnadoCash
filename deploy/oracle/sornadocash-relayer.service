@@ -1,0 +1,62 @@
+# SornadoCash relayer, behind Caddy on the same host. Installed by deploy/oracle/provision.sh.
+#
+# Secrets live in /etc/sornadocash (root, 0700):
+#   relayer.env           SOLANA_RPC_URL (carries the RPC key), PROGRAM_ID, ALLOWED_ORIGINS, alerts
+#   relayer-keypair.json  the dedicated hot wallet; never the upgrade authority (the relayer checks)
+# The keypair is handed over as a systemd credential, readable by this service only.
+
+[Unit]
+Description=SornadoCash relayer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sornado
+Group=sornado
+WorkingDirectory=/opt/sornadocash/relayer
+EnvironmentFile=/etc/sornadocash/relayer.env
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=TRUST_PROXY=loopback
+Environment=RELAYER_IDL_PATH=/opt/sornadocash/relayer/idl.json
+Environment=WITHDRAW_VK_PATH=/opt/sornadocash/relayer/withdraw_vk.json
+LoadCredential=relayer-keypair.json:/etc/sornadocash/relayer-keypair.json
+Environment=RELAYER_KEYPAIR=%d/relayer-keypair.json
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=5
+
+# Keep the box usable if the process misbehaves (954 MiB RAM).
+MemoryMax=600M
+
+# Hardening. MemoryDenyWriteExecute is deliberately absent: V8's JIT and snarkjs's WebAssembly
+# need writable-executable memory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sornadocash-relayer
+
+[Install]
+WantedBy=multi-user.target

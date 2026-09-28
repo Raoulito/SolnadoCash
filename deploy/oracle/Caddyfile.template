@@ -1,0 +1,69 @@
+# Rendered by deploy/oracle/deploy.sh into /etc/caddy/Caddyfile. Do not edit on the server.
+#
+# One origin serves everything, so the browser's CSP can be connect-src 'self':
+#   /           the static app
+#   /relayer/*  the relayer on 127.0.0.1:3000, prefix stripped
+#   /rpc        Solana JSON-RPC (HTTP and WebSocket), forwarded to the RPC provider with the API key
+#               added here. The key never reaches the browser or the bundle.
+#
+# No access log is configured, deliberately: this server sees every user's IP next to their RPC
+# queries and relayer requests, and not keeping that is the point.
+
+{
+	# Browsers fall back from HTTP/3, and UDP 443 is not open in the cloud firewall.
+	servers {
+		protocols h1 h2
+	}
+	@GLOBAL_OPTIONS@
+}
+
+(rpc_proxy) {
+	# Only this site's pages may use the proxy. A script can forge Origin, so this stops other
+	# websites spending the quota, not a determined abuser; there is no per-IP rate limit here.
+	@foreign not header Origin https://@SITE@
+	respond @foreign "forbidden" 403
+
+	request_body {
+		max_size 256KB
+	}
+
+	# {env.*} is resolved per request, so the key is not written into Caddy's saved config either.
+	rewrite * /?api-key={env.HELIUS_API_KEY}
+	reverse_proxy {args[0]} {
+		header_up Host {upstream_hostport}
+		# The provider must see this server, not the user: Caddy adds the client IP by default.
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Proto
+		header_up -X-Forwarded-Host
+		header_up -X-Real-IP
+		header_up -Origin
+		header_up -Referer
+		header_up -Cookie
+		header_up User-Agent "sornadocash-rpc-proxy"
+	}
+}
+
+@SITE@ {
+	@TLS@
+
+	encode zstd gzip
+
+	handle_path /relayer/* {
+		# Caddy sets X-Forwarded-For to the client's IP and ignores one sent by the client, and the
+		# relayer (TRUST_PROXY=loopback, HOST=127.0.0.1) reads it for its rate limits.
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle /rpc {
+		import rpc_proxy https://@RPC_HOST@
+	}
+
+	handle {
+		root * /srv/sornadocash/app
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Security headers, including the CSP extracted from the built index.html.
+	import /etc/caddy/sornadocash-headers.caddy
+}
