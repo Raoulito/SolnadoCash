@@ -9,9 +9,9 @@ import { RELAYER_URL, relayerTransportIsInsecure } from '../config';
  * Opening both halves from one browser links them.
  */
 export const EXPLORER_PRIVACY_NOTE =
-  'Block explorer: opening the deposit and the withdrawal on explorer.solana.com from the same ' +
-  'browser or IP shows it both transactions together. Check at most one of them from here, or check ' +
-  'the other from a different network.';
+  'Opening both the deposit and the withdrawal on explorer.solana.com from the same browser or IP ' +
+  'lets the explorer see them together. Check at most one of them from here, or check the other from ' +
+  'a different network.';
 
 export const DEPOSIT_SESSION_KEY = 'sornadocash_deposited_this_session';
 
