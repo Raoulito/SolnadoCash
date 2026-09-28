@@ -18,6 +18,22 @@ const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 const PROGRAM_ID_STR =
   process.env.PROGRAM_ID || "DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59";
 const PORT = parseInt(process.env.PORT || "3000", 10);
+// Bind address. Unset keeps the old behaviour (every interface). Behind a reverse proxy set it to
+// 127.0.0.1, so the port cannot be reached around the proxy.
+const HOST = process.env.HOST || undefined;
+
+/**
+ * The RPC URL with everything after the origin removed. Hosted RPC URLs carry the API key in the
+ * query (Helius: ?api-key=) or the path, and under systemd whatever is printed here is kept in the
+ * journal, so only the origin is ever logged.
+ */
+function rpcOriginForLog(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "(unparseable SOLANA_RPC_URL)";
+  }
+}
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -40,7 +56,7 @@ try {
 }
 
 console.log("SolnadoCash Relayer starting...");
-console.log("  RPC:", RPC_URL);
+console.log("  RPC:", rpcOriginForLog(RPC_URL));
 console.log("  Program:", programId.toBase58());
 console.log("  Relayer:", relayerKeypair.publicKey.toBase58());
 
@@ -50,8 +66,9 @@ const monitor = startHealthMonitor(connection, relayerKeypair.publicKey);
 // Create and start Express app
 const app = createApp({ connection, relayerKeypair, programId });
 
-const server = app.listen(PORT, () => {
-  console.log(`  Listening on port ${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  const { address, port } = server.address();
+  console.log(HOST ? `  Listening on ${address}:${port}` : `  Listening on port ${port}`);
   console.log("  Endpoints:");
   console.log("    GET  /health");
   console.log("    GET  /fee_quote?pool=<address>");
