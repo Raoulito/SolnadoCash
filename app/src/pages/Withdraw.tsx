@@ -19,6 +19,7 @@ import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
 import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice';
 import AnonymitySet from '../components/AnonymitySet';
 import { usePoolInfo } from '../hooks/usePool';
+import { denominationMismatch } from '../utils/noteDenomination';
 import { explorerTxUrl } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
@@ -103,7 +104,24 @@ export default function Withdraw() {
   // The pool is still read, but only to validate it: an address from a pasted note could name
   // any account, and surfacing that early beats failing after a minute of proof generation
   // (FE-3). The deposit count is deliberately not displayed; see components/AnonymitySet.
-  const { error: poolError } = usePoolInfo(parsedNote?.poolAddress ?? null);
+  const { info: poolInfo, error: poolError } = usePoolInfo(parsedNote?.poolAddress ?? null);
+
+  // L-4: a note states its own denomination and nothing binds that claim to the pool it names. The
+  // pool pays pool.denomination whatever the note says, so every amount shown or validated here comes
+  // from the pool, and a note that claims more is called out. The note's own value is still what the
+  // proof uses, because it is inside the leaf.
+  const poolDenomination = poolInfo?.denominationLamports ?? null;
+  const amountSol = poolDenomination !== null ? Number(poolDenomination) / 1e9 : null;
+  const denominationWarning =
+    parsedNote && poolDenomination !== null
+      ? denominationMismatch(parsedNote.denominationLamports, poolDenomination)
+      : null;
+  const denominationWarningBox = denominationWarning && (
+    <div role="alert" className="border border-red-500/40 bg-red-500/10 p-4">
+      <p className="text-red-300 text-sm font-medium mb-1">This note does not match its pool</p>
+      <p className="text-red-300/80 text-xs leading-relaxed">{denominationWarning}</p>
+    </div>
+  );
 
   // Withdrawal logic — lifted out so it can be called from confirm AND retry
   // F-3: a stale root is the expected outcome of root-ring griefing — an attacker making
@@ -162,7 +180,12 @@ export default function Withdraw() {
             'Go back and request a fresh quote.'
         );
       }
-      validateFeeQuote(note.denomination, quote, { maxRelayerFee: shownCeiling });
+      if (poolDenomination === null) {
+        throw new Error(
+          'The pool has not been read yet, so the amount it pays is unknown. Try again in a moment.'
+        );
+      }
+      validateFeeQuote(poolDenomination, quote, { maxRelayerFee: shownCeiling });
 
       // Step 1: Generate ZK proof (CPU-intensive, ~15-60s)
       setProgressStep(1);
@@ -265,7 +288,7 @@ export default function Withdraw() {
         setProgressError(msg);
       }
     }
-  }, [parsedNote, recipient, connection, shownCeiling]);
+  }, [parsedNote, recipient, connection, shownCeiling, poolDenomination]);
 
   // Step 1: Paste note
   if (step === 'paste') {
@@ -354,7 +377,12 @@ export default function Withdraw() {
         };
         // Every displayed figure is recomputed locally from the denomination;
         // the relayer's own claim is only cross-checked.
-        const b = validateFeeQuote(parsedNote.denominationLamports, quote);
+        if (poolDenomination === null) {
+          throw new Error(
+            'The pool has not been read yet, so the amount it pays is unknown. Try again in a moment.'
+          );
+        }
+        const b = validateFeeQuote(poolDenomination, quote);
         setBreakdown(b);
         setStep('confirm');
       } catch (err: unknown) {
@@ -383,12 +411,14 @@ export default function Withdraw() {
           </p>
         </div>
 
+        {denominationWarningBox}
+
         {parsedNote && (
           <div className="bg-zinc-800/50 rounded-xl p-4">
             <div className="flex justify-between text-sm">
               <span className="text-zinc-400">Amount</span>
               <span className="text-zinc-200 font-medium">
-                {parsedNote.denominationSol} SOL
+                {amountSol ?? '…'} SOL
               </span>
             </div>
           </div>
@@ -473,7 +503,7 @@ export default function Withdraw() {
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Amount</span>
             <span className="text-zinc-100 font-semibold tnum">
-              {parsedNote?.denominationSol} SOL
+              {amountSol ?? '…'} SOL
             </span>
           </div>
           <div className="flex justify-between text-sm">
@@ -535,6 +565,8 @@ export default function Withdraw() {
           </div>
         )}
 
+        {denominationWarningBox}
+
         <AnonymitySet context="withdraw" />
 
         <PrivacyNotice sameSession={sameSession} />
@@ -587,7 +619,7 @@ export default function Withdraw() {
             <div className="bg-zinc-800/50 rounded-xl p-3 space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-500">Amount</span>
-                <span className="text-zinc-400">{parsedNote?.denominationSol} SOL</span>
+                <span className="text-zinc-400">{amountSol ?? '…'} SOL</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-500">Recipient</span>
@@ -644,7 +676,7 @@ export default function Withdraw() {
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Amount</span>
-            <span className="text-zinc-200">{parsedNote?.denominationSol} SOL</span>
+            <span className="text-zinc-200">{amountSol ?? '…'} SOL</span>
           </div>
           {feeTaken && (
             <div className="flex justify-between text-sm">

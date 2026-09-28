@@ -4,9 +4,11 @@ import { useConnection } from '@solana/wallet-adapter-react';
 import { PROGRAM_ID } from '../config';
 
 // Pool struct offsets (after 8-byte Anchor discriminator):
-//   next_index: offset 80 (absolute 88)
-//   is_paused:  offset 123 (absolute 131)
+//   denomination: offset 64 (absolute 72)
+//   next_index:   offset 80 (absolute 88)
+//   is_paused:    offset 123 (absolute 131)
 const DISCRIMINATOR = 8;
+const DENOMINATION_OFFSET = DISCRIMINATOR + 64;
 const NEXT_INDEX_OFFSET = DISCRIMINATOR + 80;
 const IS_PAUSED_OFFSET = DISCRIMINATOR + 123;
 
@@ -44,6 +46,8 @@ export interface PoolInfo {
   nextIndex: number;
   isPaused: boolean;
   isSaturated: boolean;
+  /** What every withdrawal from this pool pays, as the program reads it (L-4). */
+  denominationLamports: bigint;
 }
 
 /**
@@ -127,6 +131,7 @@ export function usePoolInfo(poolAddress: string | null) {
           nextIndex,
           isPaused: data[IS_PAUSED_OFFSET] === 1,
           isSaturated: nextIndex >= SATURATION_THRESHOLD,
+          denominationLamports: data.readBigUInt64LE(DENOMINATION_OFFSET),
         });
       })
       .catch((err) => {

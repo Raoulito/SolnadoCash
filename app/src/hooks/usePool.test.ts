@@ -17,6 +17,7 @@ import { PROGRAM_ID } from '../config';
 
 const POOL_MIN_LEN = 8 + 8968;
 const NEXT_INDEX_OFFSET = 8 + 80;
+const DENOMINATION_OFFSET = 8 + 64;
 const REAL_DISCRIMINATOR = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
 const SOME_POOL = 'Ftjp3fRkHE8wiJvQxcqkLSLoBt1fcpaAkPopfDmJ4G2Y';
 const OTHER_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
@@ -33,10 +34,11 @@ vi.mock('@solana/wallet-adapter-react', () => ({
 }));
 
 /** Build account data that decodes to `deposits`, with a chosen discriminator. */
-function poolData(deposits: number, discriminator = REAL_DISCRIMINATOR): Buffer {
+function poolData(deposits: number, discriminator = REAL_DISCRIMINATOR, denomination = 100_000_000n): Buffer {
   const data = Buffer.alloc(POOL_MIN_LEN);
   discriminator.forEach((b, i) => (data[i] = b));
   data.writeBigUInt64LE(BigInt(deposits), NEXT_INDEX_OFFSET);
+  data.writeBigUInt64LE(denomination, DENOMINATION_OFFSET);
   return data;
 }
 
@@ -63,6 +65,8 @@ describe('usePoolInfo validation', () => {
       nextIndex: 118,
       isPaused: false,
       isSaturated: false,
+      // L-4: the amount the pool actually pays, which a note's own claim is checked against.
+      denominationLamports: 100_000_000n,
     });
     expect(result.current.error).toBeNull();
   });
