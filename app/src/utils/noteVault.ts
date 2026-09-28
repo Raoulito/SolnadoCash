@@ -22,7 +22,24 @@
 // secret touching disk should note that the alternative is not "no secret on disk", it is
 // "no way to recover the deposit".
 
-const KEY = 'sornadocash_pending_notes_v1';
+/**
+ * Where notes live (L-8). Each note is its own localStorage entry, `PREFIX + note`.
+ *
+ * They used to share one JSON array under ARRAY_KEY, and every write rewrote the whole array. Two tabs
+ * of the app share localStorage, so two tabs staging notes at about the same moment each wrote back a
+ * copy of the array without the other's note, and one note was silently gone. Reproduced in two tabs
+ * of one Chromium profile: with one note staged in each at the same instant, a note was lost in 83 of
+ * 100 trials (security/notevault_tabs.mjs). localStorage has no compare-and-set, and a lock would make
+ * staging asynchronous, which its callers must not be.
+ *
+ * With one key per note, a write only ever touches its own note, so tabs cannot overwrite each other.
+ * The remaining race is two tabs updating the SAME note's status at once, which loses a status
+ * update, never a note.
+ */
+const PREFIX = 'sornadocash_note_v2:';
+
+/** The previous single-array format. Migrated into per-note keys on first read, then removed. */
+const ARRAY_KEY = 'sornadocash_pending_notes_v1';
 
 /**
  * Pre-rebrand key. A staged note is the only way to recover a deposit that may have landed, so
@@ -31,25 +48,36 @@ const KEY = 'sornadocash_pending_notes_v1';
  */
 const LEGACY_KEY = 'solnadocash_pending_notes_v1';
 
-function migrateLegacy(): void {
-  try {
-    const legacy = localStorage.getItem(LEGACY_KEY);
-    if (!legacy) return;
-    const current = localStorage.getItem(KEY);
-    if (!current || current === '[]') {
-      localStorage.setItem(KEY, legacy);
-    } else {
-      // Both present: keep every note rather than choosing one side.
-      const merged = [...JSON.parse(current), ...JSON.parse(legacy)];
-      const unique = merged.filter(
-        (n, i) => merged.findIndex((m) => m?.note === n?.note) === i
-      );
-      localStorage.setItem(KEY, JSON.stringify(unique));
+/**
+ * Carry notes from both array formats into per-note keys. A note already present under its own key
+ * is left as it is, since it is the newer copy. The array is removed only once every note in it has
+ * been written, so a failure part-way leaves it to be retried on the next read.
+ */
+function migrateArrays(): void {
+  for (const key of [LEGACY_KEY, ARRAY_KEY]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        localStorage.removeItem(key);
+        continue;
+      }
+      for (const n of parsed) {
+        if (!isNote(n)) continue;
+        if (localStorage.getItem(PREFIX + n.note) === null) {
+          localStorage.setItem(PREFIX + n.note, JSON.stringify(n));
+        }
+      }
+      localStorage.removeItem(key);
+    } catch {
+      // Never let a migration failure stop the app from reading current notes.
     }
-    localStorage.removeItem(LEGACY_KEY);
-  } catch {
-    // Never let a migration failure stop the app from reading current notes.
   }
+}
+
+function isNote(n: unknown): n is PendingNote {
+  return typeof (n as { note?: unknown })?.note === 'string' && (n as { note: string }).note.startsWith('sndo_');
 }
 
 /**
@@ -75,7 +103,7 @@ export function onPendingNotesChanged(handler: () => void): () => void {
   // 'storage' fires for changes made in OTHER tabs, which matters if the user has the app
   // open twice.
   const onStorage = (e: StorageEvent) => {
-    if (e.key === null || e.key === KEY) handler();
+    if (e.key === null || e.key.startsWith(PREFIX) || e.key === ARRAY_KEY) handler();
   };
   window.addEventListener('storage', onStorage);
   return () => {
@@ -128,24 +156,39 @@ export function stagedThisSession(note: PendingNote): boolean {
 }
 
 function readAll(): PendingNote[] {
+  const notes: PendingNote[] = [];
   try {
-    migrateLegacy();
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (n): n is PendingNote =>
-        typeof n?.note === 'string' && n.note.startsWith('sndo_')
-    );
+    migrateArrays();
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(PREFIX)) continue;
+      try {
+        const n = JSON.parse(localStorage.getItem(key) ?? 'null');
+        if (isNote(n) && PREFIX + n.note === key) notes.push(n);
+      } catch {
+        // One corrupt entry must not hide the others.
+      }
+    }
   } catch {
-    return [];
+    // Storage unavailable: nothing can be read.
+  }
+  return notes;
+}
+
+function readOne(note: string): PendingNote | null {
+  try {
+    migrateArrays();
+    const n = JSON.parse(localStorage.getItem(PREFIX + note) ?? 'null');
+    return isNote(n) ? n : null;
+  } catch {
+    return null;
   }
 }
 
-function writeAll(notes: PendingNote[]): boolean {
+/** Write one note under its own key. Other notes are never read or rewritten. */
+function writeOne(entry: PendingNote): boolean {
   try {
-    localStorage.setItem(KEY, JSON.stringify(notes));
+    localStorage.setItem(PREFIX + entry.note, JSON.stringify(entry));
     notifyChanged();
     return true;
   } catch {
@@ -163,9 +206,7 @@ function writeAll(notes: PendingNote[]): boolean {
 export function stageNote(
   entry: Omit<PendingNote, 'status' | 'createdAt' | 'session'>
 ): boolean {
-  const notes = readAll().filter((n) => n.note !== entry.note);
-  notes.push({ ...entry, status: 'unsent', createdAt: Date.now(), session: SESSION_ID });
-  return writeAll(notes);
+  return writeOne({ ...entry, status: 'unsent', createdAt: Date.now(), session: SESSION_ID });
 }
 
 export function markNoteStatus(
@@ -173,24 +214,41 @@ export function markNoteStatus(
   status: PendingNote['status'],
   signature?: string
 ): void {
-  const notes = readAll().map((n) => {
-    if (n.note !== note) return n;
-    return {
-      ...n,
-      status,
-      signature: signature ?? n.signature,
-      // Stamp the first transition out of 'unsent'. Reconciliation measures its grace period from
-      // this, never from createdAt (SEC-03). Preserved once set so a later 'confirmed' transition
-      // does not push the clock forward.
-      sentAt: status === 'unsent' ? n.sentAt : (n.sentAt ?? Date.now()),
-    };
+  const n = readOne(note);
+  if (!n) return;
+  writeOne({
+    ...n,
+    status,
+    signature: signature ?? n.signature,
+    // Stamp the first transition out of 'unsent'. Reconciliation measures its grace period from
+    // this, never from createdAt (SEC-03). Preserved once set so a later 'confirmed' transition
+    // does not push the clock forward.
+    sentAt: status === 'unsent' ? n.sentAt : (n.sentAt ?? Date.now()),
   });
-  writeAll(notes);
 }
 
 /** Called only when the user has confirmed the note is saved elsewhere. */
 export function clearNote(note: string): void {
-  writeAll(readAll().filter((n) => n.note !== note));
+  try {
+    localStorage.removeItem(PREFIX + note);
+    notifyChanged();
+  } catch {
+    // Storage unavailable: nothing to remove.
+  }
+}
+
+/**
+ * Tests only: overwrite fields of a stored note, bypassing the normal transitions, so tests can
+ * describe a note's history without depending on how notes are stored.
+ */
+export function __patchNoteForTest(note: string, fields: Partial<PendingNote>): void {
+  const n = readOne(note);
+  if (n) writeOne({ ...n, ...fields });
+}
+
+/** Tests only: store a note exactly as given, as an earlier build or page load would have. */
+export function __putNoteForTest(entry: PendingNote): void {
+  writeOne(entry);
 }
 
 /**

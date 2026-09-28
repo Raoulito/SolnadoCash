@@ -9,7 +9,7 @@
     "build": "npm run build:sdk && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "npm run build:sdk && tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && node security/notevault_tabs.mjs 50",
     "lint": "eslint .",
     "test:security": "vitest run --config vitest.security.config.ts"
   },

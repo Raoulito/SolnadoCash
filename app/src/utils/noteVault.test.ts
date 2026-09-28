@@ -88,16 +88,37 @@ describe('noteVault', () => {
     expect(pendingNotes()).toEqual([]);
     localStorage.setItem('sornadocash_pending_notes_v1', '{"a":1}');
     expect(pendingNotes()).toEqual([]);
+    localStorage.setItem(`sornadocash_note_v2:${NOTE}`, '{not json');
+    expect(pendingNotes()).toEqual([]);
   });
 
-  it('drops entries that are not notes', () => {
+  it('migrates notes from the old single-array format, dropping entries that are not notes', () => {
     localStorage.setItem(
       'sornadocash_pending_notes_v1',
-      JSON.stringify([{ note: 'not-a-note' }, { note: NOTE, createdAt: 1 }])
+      JSON.stringify([{ note: 'not-a-note' }, { note: NOTE, createdAt: 1, status: 'sent' }])
     );
     const got = pendingNotes();
     expect(got).toHaveLength(1);
     expect(got[0].note).toBe(NOTE);
+    expect(got[0].status).toBe('sent');
+    expect(localStorage.getItem('sornadocash_pending_notes_v1')).toBeNull();
+  });
+
+  it('migrates the pre-rebrand array too, keeping every note from both', () => {
+    localStorage.setItem('solnadocash_pending_notes_v1', JSON.stringify([{ note: NOTE, createdAt: 1 }]));
+    localStorage.setItem('sornadocash_pending_notes_v1', JSON.stringify([{ note: NOTE2, createdAt: 2 }]));
+    expect(pendingNotes().map((n) => n.note).sort()).toEqual([NOTE, NOTE2].sort());
+  });
+
+  it('writing one note never rewrites another (L-8)', () => {
+    // What a second tab does: it only ever touches the key of the note it is staging. So a tab
+    // holding a stale view of storage cannot write another tab's note out of existence.
+    stageNote({ note: NOTE, poolAddress: 'pool', denominationSol: 1 });
+    const before = localStorage.getItem(`sornadocash_note_v2:${NOTE}`);
+    stageNote({ note: NOTE2, poolAddress: 'pool', denominationSol: 1 });
+    markNoteStatus(NOTE2, 'sent', 'sig');
+    clearNote(NOTE2);
+    expect(localStorage.getItem(`sornadocash_note_v2:${NOTE}`)).toBe(before);
   });
 
   it('notifies subscribers so the recovery banner is not a mount-time snapshot', () => {

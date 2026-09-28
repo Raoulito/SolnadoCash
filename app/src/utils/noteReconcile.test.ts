@@ -7,7 +7,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
 import { reconcilePendingNotes } from './noteReconcile';
-import { pendingNotes, stageNote } from './noteVault';
+import { __patchNoteForTest, pendingNotes, stageNote } from './noteVault';
 
 const POOL = 'Ftjp3fRkHE8wiJvQxcqkLSLoBt1fcpaAkPopfDmJ4G2Y';
 const NOTE = `sndo_${POOL}_0000000005f5e100_${'ab'.repeat(64)}`;
@@ -39,14 +39,8 @@ vi.mock('@solnadocash/sdk', () => ({
   },
 }));
 
-const STORE = 'sornadocash_pending_notes_v1';
-
 function patch(note: string, fields: Record<string, unknown>) {
-  const raw = JSON.parse(localStorage.getItem(STORE) ?? '[]');
-  localStorage.setItem(
-    STORE,
-    JSON.stringify(raw.map((n: { note: string }) => (n.note === note ? { ...n, ...fields } : n)))
-  );
+  __patchNoteForTest(note, fields);
 }
 
 /**
