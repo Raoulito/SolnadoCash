@@ -16,6 +16,7 @@ import {
   clearNote,
   onPendingNotesChanged,
   pendingNotes,
+  stagedThisSession,
   type PendingNote,
 } from '../utils/noteVault';
 import { reconcilePendingNotes } from '../utils/noteReconcile';
@@ -26,6 +27,8 @@ export default function NoteRecovery() {
   const [notes, setNotes] = useState<PendingNote[]>(() => pendingNotes());
   const [copied, setCopied] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
+  // M-3: the note awaiting its second, confirming click on Discard, if any.
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const { connection } = useConnection();
 
@@ -33,18 +36,15 @@ export default function NoteRecovery() {
   // without a reload, because the deposit error message tells the user to look here.
   useEffect(() => onPendingNotesChanged(() => setNotes(pendingNotes())), []);
 
-  // Ask the chain which of these notes are actually worth keeping. A note whose deposit never
-  // landed cannot withdraw anything, and showing it only invites a withdrawal attempt that fails
-  // with a confusing message about missing deposit history. Notes that did land are marked
-  // confirmed; anything undecidable is left exactly as it was.
+  // Ask the chain which of these notes' deposits landed, so the banner can say so. Notes that did
+  // land are marked confirmed. Reconciliation never removes a note (H-4): only the user can, below,
+  // and only after confirming (M-3).
   useEffect(() => {
     let cancelled = false;
 
-    // Confirm the cluster before reconciling. Reconciliation is the only read-only path in the app
-    // that DELETES something, so it must never run against a chain that is not the one the notes
-    // belong to. It would in fact survive that — an absent pool makes rebuildMerkleTree throw, the
-    // note is classed unresolved and kept — but relying on a downstream throw for a
-    // note-destroying decision is the wrong shape. Confirm first, then judge.
+    // Confirm the cluster before reconciling. Reconciliation no longer deletes anything (H-4), but
+    // marking a note 'confirmed' against the wrong chain would still be a false statement to the
+    // user, so it only runs against the chain the notes belong to.
     verifyCluster(connection)
       .then((verdict) => {
         if (cancelled || !verdict.ok) return;
@@ -78,8 +78,12 @@ export default function NoteRecovery() {
     }
   };
 
+  // M-3: removing a note is irreversible and destroys the only key to its deposit. It used to take a
+  // single click, with no confirmation, even for a note whose deposit was confirmed on-chain. It now
+  // takes two, and the second is offered only after saying what is at stake.
   const discard = (note: string) => {
     clearNote(note);
+    setConfirming(null);
     setNotes(pendingNotes());
   };
 
@@ -87,7 +91,7 @@ export default function NoteRecovery() {
     <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4 space-y-3">
       <div>
         <p className="text-amber-400 text-sm font-medium mb-1">
-          Unsaved secret {notes.length === 1 ? 'note' : 'notes'} from an earlier session
+          Unsaved secret {notes.length === 1 ? 'note' : 'notes'}
         </p>
         <p className="text-amber-400/70 text-xs leading-relaxed">
           A deposit was started but you never confirmed saving the note. If that deposit
@@ -100,14 +104,20 @@ export default function NoteRecovery() {
         <div key={n.note} className="bg-zinc-900/60 rounded-lg p-3 space-y-2">
           <div className="flex justify-between text-xs">
             <span className="text-zinc-500">
-              {n.denominationSol} SOL · {new Date(n.createdAt).toLocaleString()}
+              {n.denominationSol} SOL · {new Date(n.createdAt).toLocaleString()} ·{' '}
+              {/* M-3: this banner also shows the note of a deposit made in this tab, which used to
+                  be labelled "from an earlier session". */}
+              {stagedThisSession(n) ? 'this session' : 'earlier session'}
             </span>
             <span className="text-zinc-500">
               {n.status === 'confirmed'
                 ? 'confirmed on-chain'
                 : n.status === 'sent'
-                  ? 'sent, not confirmed'
-                  : 'never broadcast'}
+                  ? 'sent, not yet confirmed'
+                  : // 'unsent' means the broadcast was not RECORDED. A crash or reload between the
+                    // wallet sending and this app writing the status looks exactly the same, so
+                    // "never broadcast" invited discarding a deposit that may have landed (M-3).
+                    'not recorded as sent'}
             </span>
           </div>
 
@@ -139,13 +149,43 @@ export default function NoteRecovery() {
               </a>
             )}
             <button
-              onClick={() => discard(n.note)}
+              onClick={() => setConfirming(n.note)}
               className="px-3 py-2 rounded-lg text-xs font-medium text-zinc-500 hover:text-red-400 transition-colors"
               title="Remove this note from browser storage"
             >
               Discard
             </button>
           </div>
+
+          {confirming === n.note && (
+            <div
+              role="alertdialog"
+              aria-label="Confirm discarding this note"
+              className="border border-red-500/40 bg-red-500/10 p-3 space-y-2"
+            >
+              <p className="text-red-300 text-xs leading-relaxed">
+                {n.status === 'confirmed'
+                  ? 'This deposit is confirmed on-chain. Unless you have saved this note somewhere ' +
+                    'else, discarding it destroys the only way to withdraw those funds, permanently.'
+                  : 'If this deposit went through, this note is the only way to withdraw it. ' +
+                    'Discarding cannot be undone: save the note or check the transaction first.'}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfirming(null)}
+                  className="flex-1 py-2 text-xs font-medium bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
+                >
+                  Keep it
+                </button>
+                <button
+                  onClick={() => discard(n.note)}
+                  className="flex-1 py-2 text-xs font-medium bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
+                >
+                  Discard permanently
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>

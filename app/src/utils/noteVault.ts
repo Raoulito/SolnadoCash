@@ -107,6 +107,24 @@ export interface PendingNote {
    * reads this field and refuses to judge a note that does not have one.
    */
   sentAt?: number;
+  /**
+   * Which page load staged this note (M-3). The recovery banner shows every pending note,
+   * including the one for a deposit in progress in this tab, and used to label all of them "from an
+   * earlier session", which invited discarding the note of the deposit being made. Absent on notes
+   * stored before this field existed, which are therefore treated as earlier-session notes.
+   */
+  session?: string;
+}
+
+/** Identifies this page load. Not a secret: it only tells notes staged now from older ones. */
+const SESSION_ID =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+
+/** True if the note was staged during this page load. */
+export function stagedThisSession(note: PendingNote): boolean {
+  return note.session === SESSION_ID;
 }
 
 function readAll(): PendingNote[] {
@@ -142,9 +160,11 @@ function writeAll(notes: PendingNote[]): boolean {
  * must treat that as a blocking condition rather than proceeding, because proceeding is
  * exactly the situation this module exists to prevent.
  */
-export function stageNote(entry: Omit<PendingNote, 'status' | 'createdAt'>): boolean {
+export function stageNote(
+  entry: Omit<PendingNote, 'status' | 'createdAt' | 'session'>
+): boolean {
   const notes = readAll().filter((n) => n.note !== entry.note);
-  notes.push({ ...entry, status: 'unsent', createdAt: Date.now() });
+  notes.push({ ...entry, status: 'unsent', createdAt: Date.now(), session: SESSION_ID });
   return writeAll(notes);
 }
 
