@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'path';
@@ -125,8 +125,21 @@ function cspPlugin(env: Record<string, string | undefined>) {
 }
 
 export default defineConfig(({ mode }) => {
-  const env = process.env as Record<string, string | undefined>;
-  void mode;
+  // Must match how Vite resolves env for the CLIENT bundle, or the CSP and the code it is
+  // meant to authorise silently disagree.
+  //
+  // This read `process.env` alone, which only ever sees shell variables. Vite injects
+  // `import.meta.env.VITE_*` from `.env`/`.env.local` regardless, so configuring the RPC in a
+  // file — which is what app/.env.example instructs — put the endpoint in the bundle while
+  // leaving it out of `connect-src`. The build succeeded and the app then blocked its own RPC
+  // calls at runtime with a CSP violation, i.e. the failure appeared only once deployed.
+  //
+  // loadEnv reads the .env files for this mode; the process.env spread preserves Vite's
+  // precedence, where a real shell variable wins over a file.
+  const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env } as Record<
+    string,
+    string | undefined
+  >;
   return {
     // jsdom gives the leaf-cache tests a real localStorage.
     test: {
