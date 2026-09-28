@@ -660,7 +660,7 @@ export default function Withdraw() {
 
             <button
               onClick={() => executeWithdraw(0)}
-              disabled={clusterState.status !== 'allowed'}
+              disabled={clusterState.status !== 'allowed' || !recipientConfirmed(recipient, recipientTail)}
               className="w-full py-3 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Retry withdrawal
