@@ -73,7 +73,11 @@ function cspPlugin(env: Record<string, string | undefined>) {
 
   // Defaults mirror src/config.ts so a build with no env still gets a working policy.
   const rpc = origin(env.VITE_RPC_ENDPOINT) ;
-  const relayer = origin(env.VITE_RELAYER_URL);
+  // L-10: fall back exactly as src/config.ts does. Without this, a build with no VITE_RELAYER_URL
+  // shipped a bundle that called http://localhost:3000 under a policy that did not allow it, so every
+  // relayer request was blocked. Mainnet builds refuse to start without a relayer URL anyway
+  // (fatalConfigProblems); this is for devnet and local builds.
+  const relayer = origin(env.VITE_RELAYER_URL ?? 'http://localhost:3000');
   const network = env.VITE_SOLANA_NETWORK ?? 'devnet';
   const defaultRpc =
     network === 'mainnet-beta'

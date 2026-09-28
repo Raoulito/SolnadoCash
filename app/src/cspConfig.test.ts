@@ -19,6 +19,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfigFromFile } from 'vite';
 
+// The fallback in src/config.ts. Kept literal here so the test fails if the two ever diverge.
+const RELAYER_URL_DEFAULT = 'http://localhost:3000';
+
 const CONFIG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../vite.config.ts');
 
 async function builtPolicy(envFile: string): Promise<string> {
@@ -72,5 +75,13 @@ describe('production CSP follows the configured endpoints', () => {
     const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://file.example.test\n');
     expect(policy).toContain('https://shell.example.test');
     expect(policy).not.toContain('https://file.example.test');
+  });
+
+  it('authorises the relayer the bundle falls back to when none is configured (L-10)', async () => {
+    // config.ts uses http://localhost:3000 when VITE_RELAYER_URL is unset. The policy added no
+    // relayer origin in that case, so the built app blocked every relayer call it made.
+    const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://rpc.example.test\n');
+    const connect = policy.split('; ').find((d) => d.startsWith('connect-src'))!;
+    expect(connect).toContain(RELAYER_URL_DEFAULT);
   });
 });
