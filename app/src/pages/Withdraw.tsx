@@ -20,6 +20,7 @@ import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice
 import AnonymitySet from '../components/AnonymitySet';
 import { usePoolInfo } from '../hooks/usePool';
 import { denominationMismatch } from '../utils/noteDenomination';
+import { CONFIRM_CHARS, groupAddress, recipientConfirmed } from '../utils/recipientCheck';
 import { explorerTxUrl } from '../config';
 
 type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
@@ -77,6 +78,8 @@ export default function Withdraw() {
   const [recipient, setRecipient] = useState('');
   const [noteError, setNoteError] = useState<string | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
+  // L-6: the last characters of the recipient, typed by the user on the confirm screen.
+  const [recipientTail, setRecipientTail] = useState('');
   const [progressStep, setProgressStep] = useState(-1);
   const [progressError, setProgressError] = useState<string | null>(null);
   const [txSig, setTxSig] = useState<string | null>(null);
@@ -431,6 +434,7 @@ export default function Withdraw() {
             onChange={(e) => {
               setRecipient(e.target.value);
               setRecipientError(null);
+              setRecipientTail('');
             }}
             placeholder="Recipient wallet address"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-colors"
@@ -528,10 +532,35 @@ export default function Withdraw() {
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Recipient</span>
-            <span className="text-zinc-300 font-mono text-xs">
-              {recipient.slice(0, 4)}...{recipient.slice(-4)}
+            <span className="text-zinc-300 font-mono text-xs text-right break-all max-w-[70%]">
+              {groupAddress(recipient)}
             </span>
           </div>
+        </div>
+
+        {/* L-6: showing only the first and last four characters is exactly what an address-poisoning
+            lookalike matches. The user types the last characters themselves, from where they got
+            the address, before it is bound into the proof. */}
+        <div className="space-y-2">
+          <label htmlFor="recipient-tail" className="text-zinc-400 text-xs block">
+            Check the recipient against where you copied it from, then type its last{' '}
+            {CONFIRM_CHARS} characters
+          </label>
+          <input
+            id="recipient-tail"
+            type="text"
+            value={recipientTail}
+            onChange={(e) => setRecipientTail(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            className="w-full bg-zinc-900 border border-zinc-700 px-3 py-2 font-mono text-sm text-zinc-200"
+          />
+          {recipientTail.trim().length >= CONFIRM_CHARS && !recipientConfirmed(recipient, recipientTail) && (
+            <p role="alert" className="text-red-400 text-xs">
+              That does not match the end of this address. If you did not change it, the address you
+              pasted may have been swapped: stop and check it character by character.
+            </p>
+          )}
         </div>
 
         <div className="bg-zinc-800/30 rounded-xl p-4">
@@ -573,7 +602,7 @@ export default function Withdraw() {
 
         <button
           onClick={() => executeWithdraw(0)}
-          disabled={clusterState.status !== 'allowed'}
+          disabled={clusterState.status !== 'allowed' || !recipientConfirmed(recipient, recipientTail)}
           className="w-full py-3.5 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {clusterState.status === 'allowed'
