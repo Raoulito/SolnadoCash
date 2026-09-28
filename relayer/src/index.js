@@ -2,21 +2,19 @@
 // SolnadoCash Relayer — main entry point
 //
 // Usage:
-//   RELAYER_KEYPAIR=~/.config/solana/relayer.json \
+//   RELAYER_KEYPAIR=/path/to/dedicated-hot-wallet.json \   (required; never the upgrade authority)
 //   SOLANA_RPC_URL=https://api.devnet.solana.com \
 //   PROGRAM_ID=DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59 \
 //   node src/index.js
 
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { readFileSync } from "fs";
+import { Connection, PublicKey } from "@solana/web3.js";
 import { createApp } from "./api.js";
 import { startHealthMonitor } from "./health.js";
+import { assertNotUpgradeAuthority, loadRelayerKeypair, RelayerKeyError } from "./startup.js";
 
 // ── Config from environment ──────────────────────────────────────────────────
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
-const KEYPAIR_PATH =
-  process.env.RELAYER_KEYPAIR || `${process.env.HOME}/.config/solana/id.json`;
 const PROGRAM_ID_STR =
   process.env.PROGRAM_ID || "DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59";
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -24,10 +22,22 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
 const connection = new Connection(RPC_URL, "confirmed");
-const relayerKeypair = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(readFileSync(KEYPAIR_PATH, "utf8")))
-);
 const programId = new PublicKey(PROGRAM_ID_STR);
+
+// L-3: the key must be named explicitly (no ~/.config/solana/id.json fallback), and must not be the
+// key that can replace the program. Checked before anything is served or signed.
+let relayerKeypair;
+try {
+  relayerKeypair = loadRelayerKeypair();
+  await assertNotUpgradeAuthority(connection, programId, relayerKeypair.publicKey);
+} catch (e) {
+  console.error(
+    e instanceof RelayerKeyError
+      ? `[relayer] refusing to start: ${e.message}`
+      : `[relayer] refusing to start: could not check the signing key against the program (${e.message})`
+  );
+  process.exit(1);
+}
 
 console.log("SolnadoCash Relayer starting...");
 console.log("  RPC:", RPC_URL);
