@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, SendTransactionError, SolanaJSONRPCError } from '@solana/web3.js';
 import { generateNote, initPoseidon, poseidonHash } from '@solnadocash/sdk';
 import PoolSelector from '../components/PoolSelector';
 import AnonymitySet from '../components/AnonymitySet';
@@ -27,14 +27,35 @@ type Step = 'select' | 'confirm' | 'processing' | 'note' | 'next';
  *
  * Only this case proves no transaction reached the network. Everything else must be treated
  * as "may have been broadcast", because sendTransaction submits as well as signs.
+ *
+ * L-1: this is decided from where the error came from, never from its text. It used to match
+ * messages like "user rejected". For a wallet that only signs, the adapter broadcasts through the
+ * app's own RPC and wraps that RPC's error message verbatim, so an RPC could accept the deposit and
+ * answer "User rejected the request", and the caller then deleted the note of a deposit that landed.
+ *
+ *   - WalletSignTransactionError: signing failed, so no signed transaction exists to broadcast.
+ *   - WalletSendTransactionError: a rejection only if what it wraps is the WALLET's own EIP-1193
+ *     rejection (code 4001), as signAndSend wallets such as Phantom report it. Anything web3.js
+ *     raised came from an RPC and never counts, whatever its code or message.
+ *
+ * A wallet that reports a rejection some other way is treated as "may have been broadcast": the note
+ * is kept, which costs the user a dismissal, never a deposit.
  */
 export function isWalletRejection(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err ?? '');
-  const code = (err as { code?: unknown } | null)?.code;
-  return (
-    code === 4001 ||
-    /user rejected|rejected the request|user denied|request rejected/i.test(msg)
-  );
+  if (!err || typeof err !== 'object') return false;
+  const { name, error: cause } = err as { name?: unknown; error?: unknown };
+  if (name === 'WalletSignTransactionError') return true;
+  if (name === 'WalletSendTransactionError') return isWalletOriginRejection(cause);
+  return isWalletOriginRejection(err);
+}
+
+/** An EIP-1193 user rejection raised by the wallet itself, as opposed to anything from an RPC. */
+function isWalletOriginRejection(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if (err instanceof SendTransactionError || err instanceof SolanaJSONRPCError) return false;
+  const { name, code } = err as { name?: unknown; code?: unknown };
+  if (name === 'SendTransactionError' || name === 'SolanaJSONRPCError') return false;
+  return code === 4001;
 }
 
 interface DepositProps {

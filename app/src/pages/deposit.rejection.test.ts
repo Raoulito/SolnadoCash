@@ -9,6 +9,7 @@
 // rejection. These tests pin both directions, because a false positive here loses funds.
 
 import { describe, expect, it } from 'vitest';
+import { WalletSendTransactionError, WalletSignTransactionError } from '@solana/wallet-adapter-base';
 import { isWalletRejection } from './Deposit';
 
 describe('isWalletRejection', () => {
@@ -16,14 +17,25 @@ describe('isWalletRejection', () => {
     expect(isWalletRejection(Object.assign(new Error('nope'), { code: 4001 }))).toBe(true);
   });
 
-  it('recognises the wallet-adapter and Phantom rejection messages', () => {
+  it('recognises a wallet that declined to sign', () => {
+    expect(isWalletRejection(new WalletSignTransactionError('User rejected the request.'))).toBe(true);
+  });
+
+  it('recognises a signAndSend wallet (Phantom) wrapping its own 4001 rejection', () => {
+    const phantom = { code: 4001, message: 'User rejected the request.' };
+    expect(isWalletRejection(new WalletSendTransactionError(phantom.message, phantom))).toBe(true);
+  });
+
+  it('does NOT trust rejection wording on its own (L-1)', () => {
+    // Message text can come from the RPC that broadcast the deposit. A message is not evidence.
     for (const msg of [
       'User rejected the request.',
       'User rejected the request',
       'user denied transaction signature',
       'Request rejected',
     ]) {
-      expect(isWalletRejection(new Error(msg))).toBe(true);
+      expect(isWalletRejection(new Error(msg))).toBe(false);
+      expect(isWalletRejection(new WalletSendTransactionError(msg, new Error(msg)))).toBe(false);
     }
   });
 
