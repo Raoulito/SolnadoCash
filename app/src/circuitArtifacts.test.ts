@@ -56,7 +56,9 @@ describe('shipped proving artifacts match the deployed verifier', () => {
     });
   });
 
-  it('the shipped zkey carries exactly the on-chain verification key', async () => {
+  // Reading the 5.4 MB zkey takes about half a second alone, but exceeded vitest's default 5 s while
+  // other suites competed for the CPU, so the bound is explicit.
+  it('the shipped zkey carries exactly the on-chain verification key', { timeout: 60_000 }, async () => {
     const shippedVk = await snarkjs.zKey.exportVerificationKey(SHIPPED_ZKEY);
     // Compared field by field so a failure names what moved. delta and IC are what change when a
     // key is regenerated for a new circuit; alpha/beta/gamma can survive a regeneration unchanged.
