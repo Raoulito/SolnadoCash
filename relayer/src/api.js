@@ -25,6 +25,7 @@ import { verifyProofOffChain } from "./verify.js";
 import { submitWithdraw } from "./tx.js";
 import { preflight } from "./preflight.js";
 import { loadPool } from "./pool.js";
+import { nullifierKey, rateLimitKey } from "./ratelimit.js";
 
 /**
  * Create the Express app with all routes.
@@ -96,34 +97,45 @@ export function createApp({ connection, relayerKeypair, programId }) {
 
   app.use(express.json({ limit: "64kb" }));
 
-  // T28 — Rate limiting: 30 requests per minute per IP
+  // T28 — Rate limiting: 30 requests per minute per client.
+  //
+  // M-5: every limiter keys on rateLimitKey(req.ip), which is the IPv4 address or the IPv6 /56. The
+  // library default is the exact address, so an IPv6 client could rotate through its /64 and never
+  // be limited. The library's own IP validation is off because the key is no longer the raw IP.
+  const byClient = (req) => rateLimitKey(req.ip);
   const limiter = rateLimit({
     windowMs: 60_000,
     max: 30,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: byClient,
+    validate: { ip: false },
     message: { error: "TooManyRequests", retryAfter: 60 },
   });
   app.use(limiter);
 
-  // Stricter limit for proof submission: 5 per minute per IP
+  // Stricter limit for proof submission: 5 per minute per client
   const submitLimiter = rateLimit({
     windowMs: 60_000,
     max: 5,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: byClient,
+    validate: { ip: false },
     message: { error: "RelayerBusy", retryAfter: 60 },
   });
 
-  // A second limiter keyed on the nullifier rather than the IP. IP-based limits
-  // are defeated by address rotation; a nullifier can only ever be spent once, so
-  // repeated submissions of the same one are always either a retry or an attack.
+  // A second limiter keyed on the nullifier rather than the client. Client limits are defeated by
+  // address rotation; a nullifier can only ever be spent once, so repeated submissions of the same
+  // one are always either a retry or an attack. Keyed on the canonical field element (M-5): the raw
+  // string made "5", "05" and "0x5" three notes, and let each junk value hold memory for a minute.
   const nullifierLimiter = rateLimit({
     windowMs: 60_000,
     max: 3,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => String(req.body?.publicSignals?.[0] ?? "unknown"),
+    keyGenerator: (req) => `note:${nullifierKey(req.body?.publicSignals?.[0])}`,
+    validate: { ip: false },
     message: { error: "TooManyAttemptsForNote", retryAfter: 60 },
   });
 
