@@ -9,7 +9,7 @@
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import { createApp } from "./api.js";
-import { startHealthMonitor } from "./health.js";
+import { startHealthMonitor, thresholdsFromEnv } from "./health.js";
 import { assertNotUpgradeAuthority, loadRelayerKeypair, RelayerKeyError } from "./startup.js";
 
 // ── Config from environment ──────────────────────────────────────────────────
@@ -61,7 +61,14 @@ console.log("  Program:", programId.toBase58());
 console.log("  Relayer:", relayerKeypair.publicKey.toBase58());
 
 // T29 — Start health monitoring (checks balance every 60s)
-const monitor = startHealthMonitor(connection, relayerKeypair.publicKey);
+let thresholds;
+try {
+  thresholds = thresholdsFromEnv();
+} catch (e) {
+  console.error(`[relayer] refusing to start: ${e.message}`);
+  process.exit(1);
+}
+const monitor = startHealthMonitor(connection, relayerKeypair.publicKey, thresholds);
 
 // Create and start Express app
 const app = createApp({ connection, relayerKeypair, programId });
