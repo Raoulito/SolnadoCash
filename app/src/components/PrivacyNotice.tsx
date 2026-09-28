@@ -1,5 +1,18 @@
 import { RELAYER_URL, relayerTransportIsInsecure } from '../config';
 
+/**
+ * What a block explorer learns when this app's transaction links are opened (L-7).
+ *
+ * The app links to explorer.solana.com for the deposit, the withdrawal and recovered notes. The
+ * referrer is stripped (no-referrer), so the explorer does not learn which app sent the user, but it
+ * sees every signature opened, the IP opening it, and whoever runs its RPC backend sees the same.
+ * Opening both halves from one browser links them.
+ */
+export const EXPLORER_PRIVACY_NOTE =
+  'Block explorer: opening the deposit and the withdrawal on explorer.solana.com from the same ' +
+  'browser or IP shows it both transactions together. Check at most one of them from here, or check ' +
+  'the other from a different network.';
+
 export const DEPOSIT_SESSION_KEY = 'sornadocash_deposited_this_session';
 
 /** Record that a deposit was made in this browser session (H-6). */
@@ -78,6 +91,9 @@ export default function PrivacyNotice({
           <p>
             <strong className="text-zinc-400">On-chain:</strong> there is no link between your
             deposit and this withdrawal. That is what the ZK proof guarantees.
+          </p>
+          <p>
+            <strong className="text-zinc-400">Explorer:</strong> {EXPLORER_PRIVACY_NOTE}
           </p>
           <p>
             <strong className="text-zinc-400">Off-chain:</strong> your IP address is not covered

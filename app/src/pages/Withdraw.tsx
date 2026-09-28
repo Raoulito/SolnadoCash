@@ -16,7 +16,7 @@ import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndi
 import { rebuildMerkleTree } from '../utils/merkle';
 import { confirmWithdrawalOnChain } from '../utils/withdrawalCheck';
 import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
-import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice';
+import PrivacyNotice, { depositedThisSession, EXPLORER_PRIVACY_NOTE } from '../components/PrivacyNotice';
 import AnonymitySet from '../components/AnonymitySet';
 import { usePoolInfo } from '../hooks/usePool';
 import { denominationMismatch } from '../utils/noteDenomination';
@@ -720,6 +720,7 @@ export default function Withdraw() {
         {txSig && (
           <a
             href={explorerTxUrl(txSig)}
+            title={EXPLORER_PRIVACY_NOTE}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block text-cyan-400 text-sm hover:text-cyan-300 transition-colors underline"

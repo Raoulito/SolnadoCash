@@ -21,6 +21,7 @@ import {
 } from '../utils/noteVault';
 import { reconcilePendingNotes } from '../utils/noteReconcile';
 import { verifyCluster } from '../utils/clusterGate';
+import { EXPLORER_PRIVACY_NOTE } from './PrivacyNotice';
 import { explorerTxUrl } from '../config';
 
 export default function NoteRecovery() {
@@ -141,6 +142,7 @@ export default function NoteRecovery() {
             {n.signature && (
               <a
                 href={explorerTxUrl(n.signature)}
+                title={EXPLORER_PRIVACY_NOTE}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex-1 py-2 rounded-lg text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-center"

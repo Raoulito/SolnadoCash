@@ -8,7 +8,7 @@ import AnonymitySet from '../components/AnonymitySet';
 import NoteDisplay from '../components/NoteDisplay';
 import { capacityLabel, usePoolInfo } from '../hooks/usePool';
 import { getProgram, buildDepositTx } from '../utils/program';
-import { markDepositedThisSession } from '../components/PrivacyNotice';
+import { EXPLORER_PRIVACY_NOTE, markDepositedThisSession } from '../components/PrivacyNotice';
 import { stageNote, markNoteStatus, clearNote } from '../utils/noteVault';
 import { explorerTxUrl, type PoolConfig } from '../config';
 import { assertClusterAllowed, ClusterBlockedError } from '../utils/clusterGate';
@@ -587,6 +587,7 @@ export default function Deposit({ onGoToWithdraw, onNoteLock }: DepositProps) {
           {txSig && (
             <a
               href={explorerTxUrl(txSig)}
+              title={EXPLORER_PRIVACY_NOTE}
               target="_blank"
               rel="noopener noreferrer"
               className="text-cyan-400/70 text-xs hover:text-cyan-400 transition-colors underline"
