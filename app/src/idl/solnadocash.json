@@ -699,6 +699,11 @@
           },
           {
             "name": "treasury_fee",
+            "docs": [
+              "What the treasury actually received. 0 when the pool's fee could not be paid to an empty",
+              "treasury without leaving it below rent-exemption, in which case it went to the recipient",
+              "(M-1)."
+            ],
             "type": "u64"
           }
         ]

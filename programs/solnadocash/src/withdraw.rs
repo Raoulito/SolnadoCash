@@ -55,6 +55,43 @@ pub fn worst_case_user_amount(denomination: u64) -> Option<u64> {
         .and_then(|x| x.checked_sub(denomination / MAX_RELAYER_FEE_DIVISOR))
 }
 
+/// Decide who receives the protocol fee (M-1). Returns `(treasury_fee, user_amount)`.
+///
+/// The runtime rejects any transaction that leaves a writable account holding lamports but below its
+/// rent-exempt minimum. On the 0.1 SOL pool the fee is 200,000 lamports and a data-less account's
+/// minimum is 890,880, so crediting an EMPTY treasury failed the whole withdrawal. Sweeping the
+/// treasury to zero is the ordinary way to collect fees, so every withdrawal from the pool then
+/// reverted until someone topped the treasury up. That handed whoever controls the treasury, or any
+/// operator who swept it without knowing this, a switch that froze users' funds.
+///
+/// So when the credit would leave the treasury below its minimum, the fee goes to the recipient
+/// instead, and the withdrawal succeeds. The protocol forgoes at most one fee per withdrawal, and
+/// only while the treasury is empty; any credit that clears the minimum is paid as normal.
+///
+/// `treasury_balance` and `treasury_data_len` are read before any credit. `treasury_is_payee` is true
+/// when the treasury account is also the relayer or the recipient: that account receives other
+/// credits in the same instruction and is funded by them, so the fee is never redirected for it.
+pub fn route_treasury_fee(
+    treasury_fee: u64,
+    user_amount: u64,
+    treasury_balance: u64,
+    treasury_data_len: usize,
+    treasury_is_payee: bool,
+    rent: &Rent,
+) -> Result<(u64, u64)> {
+    let after = treasury_balance
+        .checked_add(treasury_fee)
+        .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
+    let stays_valid = treasury_fee == 0 || rent.is_exempt(after, treasury_data_len);
+    if treasury_is_payee || stays_valid {
+        return Ok((treasury_fee, user_amount));
+    }
+    let user_amount = user_amount
+        .checked_add(treasury_fee)
+        .ok_or_else(|| error!(ErrorCode::ArithmeticOverflow))?;
+    Ok((0, user_amount))
+}
+
 /// Named account bindings for `process_withdraw` (F-7).
 ///
 /// These arrived as a `&[AccountInfo]` indexed by `IDX_POOL`, `IDX_VAULT` and so on, and the only
@@ -513,6 +550,20 @@ pub fn process_withdraw(
         vault_info.lamports() >= vault_required,
         ErrorCode::InsufficientVaultBalance
     );
+
+    // M-1: an empty treasury cannot receive a sub-rent fee, and crediting it would revert the whole
+    // withdrawal at the runtime's rent check. See route_treasury_fee. Decided here, after every
+    // validation, so the split below and the conservation check both use the routed amounts.
+    let treasury_is_payee =
+        treasury_info.key == relayer_info.key || treasury_info.key == recipient_info.key;
+    let (treasury_fee, user_amount) = route_treasury_fee(
+        treasury_fee,
+        user_amount,
+        treasury_info.lamports(),
+        treasury_info.data_len(),
+        treasury_is_payee,
+        &rent,
+    )?;
 
     // Snapshot for the conservation check below (M-2). The previous "fee invariant"
     // asserted treasury_fee + relayer_fee_taken + user_amount == denomination

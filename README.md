@@ -248,6 +248,15 @@ treasury_fee = denomination / 500
 ```
 Integer division only. Applied to the raw denomination, never to `denomination - relayer_fee`. No overflow possible for any valid u64.
 
+**An empty treasury never blocks a withdrawal.** Solana rejects any transaction that leaves an
+account holding lamports but below its rent-exempt minimum (890,880 lamports for a data-less
+account on mainnet parameters). On the 0.1 SOL rung the fee is 200,000 lamports, so crediting a
+treasury holding nothing used to revert the whole withdrawal, and sweeping the treasury to zero,
+which is how fees are collected, froze every 0.1 SOL withdrawal until it was topped up. When the
+credit would leave the treasury below its minimum, the fee now goes to the recipient instead and the
+withdrawal succeeds; `WithdrawalEvent.treasury_fee` reports what the treasury actually received. To
+keep collecting fees on small rungs, leave the treasury at or above its rent-exempt minimum.
+
 For a 1 SOL pool:
 | Recipient | Amount |
 |-----------|--------|

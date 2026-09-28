@@ -19,6 +19,9 @@ pub struct WithdrawalEvent {
     // read it from the accounts.
     pub relayer: Pubkey,
     pub relayer_fee: u64,
+    /// What the treasury actually received. 0 when the pool's fee could not be paid to an empty
+    /// treasury without leaving it below rent-exemption, in which case it went to the recipient
+    /// (M-1).
     pub treasury_fee: u64,
 }
 

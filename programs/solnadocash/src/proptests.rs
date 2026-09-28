@@ -10,7 +10,11 @@
 
 use proptest::prelude::*;
 
-use crate::withdraw::{compute_fee_split, worst_case_user_amount, MAX_RELAYER_FEE_DIVISOR};
+use anchor_lang::prelude::Rent;
+
+use crate::withdraw::{
+    compute_fee_split, route_treasury_fee, worst_case_user_amount, MAX_RELAYER_FEE_DIVISOR,
+};
 
 /// Calls the REAL on-chain fee split (withdraw.rs::compute_fee_split). Not a mirror —
 /// a mirrored copy would drift from the shipped logic and these properties would stop
@@ -232,4 +236,71 @@ proptest! {
             crate::withdraw::pubkey_to_field(&kb).unwrap()
         );
     }
+
+    // ── M-1: the protocol fee never makes a withdrawal revert on the treasury's rent ──────────
+
+    /// Whatever the treasury holds, the routed amounts are paid in full (fee + user unchanged in
+    /// total), and the treasury either stays unfunded or ends at or above its rent-exempt minimum,
+    /// which is exactly the post-state the runtime accepts.
+    #[test]
+    fn treasury_routing_conserves_and_never_leaves_rent_paying(
+        (denomination, fee_max, fee_taken) in denom_and_fees(),
+        treasury_balance in prop_oneof![Just(0u64), 0u64..2_000_000, 0u64..u64::MAX / 4],
+        data_len in prop_oneof![Just(0usize), 0usize..200],
+        is_payee in any::<bool>(),
+    ) {
+        let rent = Rent::default();
+        if let Some((treasury_fee, _, user_amount)) = fee_split(denomination, fee_taken, fee_max) {
+            let (t, u) = route_treasury_fee(
+                treasury_fee, user_amount, treasury_balance, data_len, is_payee, &rent,
+            ).unwrap();
+            prop_assert_eq!(t + u, treasury_fee + user_amount, "routing must not create or lose lamports");
+            prop_assert!(t == treasury_fee || t == 0);
+            if !is_payee {
+                let after = treasury_balance + t;
+                prop_assert!(
+                    after == 0 || rent.is_exempt(after, data_len) || t == 0,
+                    "a credited treasury must end rent-exempt"
+                );
+                if t == 0 && treasury_fee > 0 {
+                    prop_assert!(!rent.is_exempt(treasury_balance + treasury_fee, data_len));
+                }
+            } else {
+                prop_assert_eq!(t, treasury_fee, "a treasury that is also a payee is never redirected");
+            }
+        }
+    }
 }
+
+#[test]
+fn m1_empty_treasury_on_the_0_1_sol_pool_redirects_the_fee() {
+    // The case that froze withdrawals: 200,000 lamports into an empty data-less account.
+    let rent = Rent::default();
+    let (t, u) = route_treasury_fee(200_000, 97_800_000, 0, 0, false, &rent).unwrap();
+    assert_eq!((t, u), (0, 98_000_000));
+}
+
+#[test]
+fn m1_funded_treasury_is_paid_as_before() {
+    let rent = Rent::default();
+    let min = rent.minimum_balance(0);
+    assert_eq!(route_treasury_fee(200_000, 97_800_000, min, 0, false, &rent).unwrap(), (200_000, 97_800_000));
+    // Exactly reaching the minimum counts as exempt.
+    assert_eq!(route_treasury_fee(200_000, 1, min - 200_000, 0, false, &rent).unwrap(), (200_000, 1));
+    // One lamport short does not.
+    assert_eq!(route_treasury_fee(200_000, 1, min - 200_001, 0, false, &rent).unwrap(), (0, 200_001));
+}
+
+#[test]
+fn m1_one_sol_pool_fee_clears_rent_on_its_own() {
+    // 2,000,000 >= 890,880: an empty treasury is simply funded by the fee, no redirect.
+    let rent = Rent::default();
+    assert_eq!(route_treasury_fee(2_000_000, 978_000_000, 0, 0, false, &rent).unwrap(), (2_000_000, 978_000_000));
+}
+
+#[test]
+fn m1_treasury_that_is_also_relayer_or_recipient_is_never_redirected() {
+    let rent = Rent::default();
+    assert_eq!(route_treasury_fee(200_000, 97_800_000, 0, 0, true, &rent).unwrap(), (200_000, 97_800_000));
+}
+
