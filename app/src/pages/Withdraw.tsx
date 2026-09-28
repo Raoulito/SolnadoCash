@@ -14,6 +14,7 @@ import {
 } from '@solnadocash/sdk';
 import ProgressIndicator, { type ProgressStep } from '../components/ProgressIndicator';
 import { rebuildMerkleTree } from '../utils/merkle';
+import { confirmWithdrawalOnChain } from '../utils/withdrawalCheck';
 import { fetchFeeQuote, submitProof } from '../hooks/useRelayer';
 import PrivacyNotice, { depositedThisSession } from '../components/PrivacyNotice';
 import AnonymitySet from '../components/AnonymitySet';
@@ -183,6 +184,16 @@ export default function Withdraw() {
         poolAddress: poolPubkey.toBase58(),
         recipient,
         relayerFeeMax: feeQuoteRaw.relayerFeeMax,
+      });
+
+      // M-4: do not take the relayer's word for it. "Withdrawal complete" used to follow any
+      // non-empty txSignature, so a relayer could report a withdrawal it never sent, or another
+      // withdrawal's real signature, and a user who then discarded the note lost the deposit.
+      // Confirmed on-chain against THIS note's nullifier account before anything says it is done.
+      await confirmWithdrawalOnChain(connection, {
+        signature: result.txSignature,
+        pool: poolPubkey,
+        nullifierHash: publicSignals[0],
       });
 
       setTxSig(result.txSignature || null);

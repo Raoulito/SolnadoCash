@@ -1,3 +1,4 @@
+import bs58 from 'bs58';
 import { RELAYER_URL } from '../config';
 
 export interface FeeQuote {
@@ -117,7 +118,24 @@ export async function submitProof(params: {
         'your note may already be spent.'
     );
   }
+  // M-4: any non-empty string used to be accepted. The withdraw flow then confirms the signature
+  // on-chain (utils/withdrawalCheck.ts); this only rejects what cannot be a signature at all.
+  if (!isTransactionSignature(body.txSignature)) {
+    throw new Error(
+      'The relayer reported success but what it returned is not a transaction signature. ' +
+        'Do not discard your note: check the recipient balance before retrying.'
+    );
+  }
   return body as unknown as { txSignature: string; feeTaken: string };
+}
+
+/** 64 bytes, base58: the only shape a Solana transaction signature can have. */
+function isTransactionSignature(value: string): boolean {
+  try {
+    return bs58.decode(value).length === 64;
+  } catch {
+    return false;
+  }
 }
 
 export async function checkRelayerHealth(): Promise<boolean> {

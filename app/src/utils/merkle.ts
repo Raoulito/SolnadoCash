@@ -77,7 +77,7 @@ type RpcRequest = (
  * `maxSupportedTransactionVersion` says. `_rpcRequest` is not public API, but it is what
  * Anchor itself calls for the same reason; its absence is reported rather than papered over.
  */
-function rawRpc(connection: Connection): RpcRequest {
+export function rawRpc(connection: Connection): RpcRequest {
   const rpc = (connection as unknown as { _rpcRequest?: RpcRequest })._rpcRequest;
   if (typeof rpc !== 'function') {
     throw new Error('This version of @solana/web3.js does not expose a raw RPC call.');

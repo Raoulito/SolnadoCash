@@ -5,7 +5,11 @@
 // including that the timeout actually aborts rather than merely being configured.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import bs58 from 'bs58';
 import { fetchFeeQuote, submitProof, checkRelayerHealth } from './useRelayer';
+
+// A correctly shaped transaction signature: 64 bytes, base58.
+const SIG = bs58.encode(new Uint8Array(64).fill(9));
 
 const GOOD_QUOTE = {
   relayerAddress: '4PLXgVX9MumeLLjcyvYFNoKq1dECdEneiFA8StLCnf1c',
@@ -110,12 +114,20 @@ describe('relayer client', () => {
     await expect(submitProof(SUBMIT_ARGS)).rejects.toThrow(/no transaction signature/);
   });
 
+  it('rejects a "signature" that is not a transaction signature (M-4)', async () => {
+    // Any non-empty string used to read as a completed withdrawal.
+    for (const txSignature of ['totally-not-a-signature', 'abc123', bs58.encode(new Uint8Array(32))]) {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ txSignature, feeTaken: '1' })));
+      await expect(submitProof(SUBMIT_ARGS)).rejects.toThrow(/not a transaction signature/);
+    }
+  });
+
   it('accepts a submission that includes a signature', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
-      jsonResponse({ txSignature: 'abc123', feeTaken: '3000000' })
+      jsonResponse({ txSignature: SIG, feeTaken: '3000000' })
     ));
     await expect(submitProof(SUBMIT_ARGS)).resolves.toMatchObject({
-      txSignature: 'abc123',
+      txSignature: SIG,
     });
   });
 
