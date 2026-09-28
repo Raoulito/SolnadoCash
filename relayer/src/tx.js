@@ -18,7 +18,12 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const IDL_PATH = join(__dirname, "../../target/idl/solnadocash.json");
+// The tracked copy, not target/idl. target/ is gitignored and only `anchor build` writes it, so a
+// relayer deployed from a git checkout (a server with no Rust toolchain) could not build a single
+// transaction, and every test that reaches this file failed on a clean clone. test/idl.test.js pins
+// this copy against target/idl whenever a build output exists, so the two cannot drift silently.
+const IDL_PATH =
+  process.env.RELAYER_IDL_PATH || join(__dirname, "../../app/src/idl/solnadocash.json");
 
 import { COMPUTE_UNITS as COMPUTE_UNIT_LIMIT } from "./fees.js";
 

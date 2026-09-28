@@ -17,8 +17,11 @@ import { generateNote } from "../src/note.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, "../..");
-const WITHDRAW_WASM = resolve(ROOT_DIR, "circuits/build/withdraw_js/withdraw.wasm");
-const WITHDRAW_ZKEY = resolve(ROOT_DIR, "circuits/build/withdraw_final.zkey");
+// Tracked copies, identical to circuits/build and pinned to the deployed verifier by
+// app/src/circuitArtifacts.test.ts. circuits/build is gitignored: pointing here made these
+// tests SKIP silently on a clean clone, so a green run there proved nothing about proofs.
+const WITHDRAW_WASM = resolve(ROOT_DIR, "app/public/circuits/withdraw.wasm");
+const WITHDRAW_ZKEY = resolve(ROOT_DIR, "app/public/circuits/withdraw_final.zkey");
 
 const BN254_FIELD_ORDER =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
