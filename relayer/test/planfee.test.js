@@ -72,10 +72,10 @@ describe("planFee", () => {
     assert.equal(r.degraded, true);
   });
 
-  it("keeps the small-denomination subsidy, but bounded and independent of congestion", () => {
-    // A ceiling BELOW the deterministic cost. This is the N-1 situation: the 2% cap does not cover
-    // signature fee plus rent, and the project's choice is to subsidise rather than refuse, because
-    // refusing pushes the user into self-relaying.
+  it("reports a below-cost ceiling's shortfall exactly, independent of congestion", () => {
+    // A ceiling BELOW the deterministic cost. The submit route now refuses these before calling
+    // planFee (H-3), so this pins what planFee reports, which that refusal and the economics
+    // simulation rely on: the shortfall is exact and congestion cannot enlarge it.
     const feeMax = BigInt(DETERMINISTIC - 200_000);
 
     const calm = planFee({ feeMax, rent: RENT, estimatedPriorityPerCU: 0 });

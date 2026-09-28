@@ -229,6 +229,25 @@ export function createApp({ connection, relayerKeypair, programId }) {
         return res.status(400).json({ error: "InvalidPublicSignals" });
       }
 
+      // H-3: the fee ceiling is bound into the proof, so the relayer must be told it exactly. It
+      // used to fall back to the relayer's own current quote when absent, which can only match the
+      // proof by coincidence, and it went through BigInt(), which also accepts "", "0x10", " 5" and
+      // `true`. A plain decimal string of a u64 is the only accepted form: a JSON number above 2^53
+      // silently loses precision, and every client (app, SDK, integration test) sends a string.
+      if (typeof relayerFeeMax !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(relayerFeeMax)) {
+        return res.status(400).json({
+          error: "InvalidRelayerFeeMax",
+          message: "relayerFeeMax must be the fee ceiling bound into the proof, as a decimal string.",
+        });
+      }
+      const feeMax = BigInt(relayerFeeMax);
+      if (feeMax > 0xffffffffffffffffn) {
+        return res.status(400).json({
+          error: "InvalidRelayerFeeMax",
+          message: "relayerFeeMax does not fit in a u64.",
+        });
+      }
+
       let poolPubkey, recipientPubkey;
       try {
         poolPubkey = new PublicKey(poolAddress);
@@ -258,12 +277,43 @@ export function createApp({ connection, relayerKeypair, programId }) {
       }
       const treasuryAddress = new PublicKey(pool.treasury);
 
+      // H-3: never sign a withdrawal that does not reimburse the relayer.
+      //
+      // The relayer pays the signature fee and the nullifier rent up front, and the rent is locked
+      // in the nullifier account forever by design. Nothing compared the ceiling with that cost, so
+      // a genuine proof bound to a ceiling of 0 was signed and paid for, and the shortfall only
+      // produced a console warning. Pools are permissionless, so an attacker who creates their own
+      // also gets the treasury fee back, and drained the hot wallet for about their own deposit
+      // transaction fee per round (~290x leverage), or ~7x on a real pool.
+      //
+      // Below the cap the check is the whole fix: planFee spends on priority only what the ceiling
+      // leaves after these two costs, so a ceiling at or above them is never subsidised. The cap
+      // check adds nothing on-chain (the program enforces it) but refuses before any work.
+      const onChainCap = pool.denomination / 50n;
+      if (feeMax > onChainCap) {
+        return res.status(400).json({
+          error: "RelayerFeeMaxTooHigh",
+          message: "relayerFeeMax exceeds this pool's on-chain cap of 2% of the denomination.",
+          cap: onChainCap.toString(),
+        });
+      }
+      const rent = await getNullifierRent(connection);
+      const minimum = BigInt(BASE_FEE + rent);
+      if (feeMax < minimum) {
+        return res.status(400).json({
+          error: "RelayerFeeBelowCost",
+          message:
+            "The fee ceiling bound into this proof does not cover the signature fee and the " +
+            "nullifier rent this relayer would pay. Request a new quote and prove again; the " +
+            "note has not been spent.",
+          minimum: minimum.toString(),
+        });
+      }
+
       // Compute the fee to take. An honest relayer charges its REAL cost, not the
       // ceiling the user agreed to (H-3): relayerFeeMax exists to absorb fee
       // movement between quote and submission, not to be claimed in full.
-      const feeMax = BigInt(relayerFeeMax || (await computeRelayerFeeMax(connection)));
       const estimatedPriorityPerCU = await getPriorityFeePerCU(connection);
-      const rent = await getNullifierRent(connection);
 
       // planFee caps the priority fee by what the ceiling can actually reimburse. Clamping only
       // the CHARGE while still attaching the full estimate meant the relayer silently paid the
@@ -285,12 +335,14 @@ export function createApp({ connection, relayerKeypair, programId }) {
         );
       }
       if (subsidy > 0) {
-        // Structural, not congestion-driven: the denomination's 2% cap does not cover the
-        // deterministic cost. Bounded and known per withdrawal, but the operator should see it.
-        console.warn(
-          `[relayer] subsidising ${subsidy} lamports on this withdrawal: the agreed ceiling ` +
-            `does not cover signature fee plus nullifier rent for this denomination.`
-        );
+        // Unreachable while the floor above holds, since planFee only spends what the ceiling
+        // leaves. Kept as a refusal rather than a warning so that a later change to planFee
+        // cannot quietly reintroduce paying out of pocket.
+        return res.status(400).json({
+          error: "RelayerFeeBelowCost",
+          message: "This withdrawal would cost the relayer more than the agreed ceiling.",
+          minimum: minimum.toString(),
+        });
       }
 
       // T29 — Check relayer balance before submitting

@@ -136,12 +136,12 @@ export function planFee({ feeMax, rent, estimatedPriorityPerCU }) {
   const appliedPriorityPerCU = priorityPerCUFromLamports(appliedLamports);
   const spentOnPriority = priorityFeeLamports(appliedPriorityPerCU);
 
-  // The charge is still clamped to the ceiling. On the smallest rungs the 2% cap sits BELOW the
-  // deterministic cost, and the project's deliberate policy (N-1) is that relayers subsidise those
-  // withdrawals rather than refuse them, since refusing pushes the user into self-relaying and
-  // costs them their privacy. Capping the priority component above turns that subsidy into a
-  // BOUNDED one: at most max(0, deterministic - feeMax) per withdrawal, a known constant, instead
-  // of an unbounded amount that congestion decides.
+  // The charge is still clamped to the ceiling. If the ceiling is below the deterministic cost the
+  // result reports the shortfall as `subsidy` rather than hiding it. The submit route refuses any
+  // such ceiling before it gets here (H-3): the earlier policy of subsidising small rungs (N-1) let
+  // anyone bind a ceiling of 0 into a genuine proof and make the relayer pay the nullifier rent, and
+  // every rung on the current ladder covers its cost anyway. Capping the priority component above is
+  // what keeps a ceiling AT or above the deterministic cost from ever producing a subsidy.
   const spent = deterministic + spentOnPriority;
   const charged = BigInt(spent) < feeMax ? BigInt(spent) : feeMax;
 
