@@ -544,7 +544,7 @@ export default function Withdraw() {
         <div className="space-y-2">
           <label htmlFor="recipient-tail" className="text-zinc-400 text-xs block">
             Check the recipient against where you copied it from, then type its last{' '}
-            {CONFIRM_CHARS} characters
+            {CONFIRM_CHARS} characters, without spaces
           </label>
           <input
             id="recipient-tail"
