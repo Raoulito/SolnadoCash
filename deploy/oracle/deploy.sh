@@ -3,7 +3,7 @@
 #
 #   https://<SITE>/            the app (static)
 #   https://<SITE>/relayer/*   the relayer, on 127.0.0.1:3000 under systemd
-#   https://<SITE>/rpc         Solana JSON-RPC (HTTP + WebSocket), proxied to the RPC provider by
+#   https://<SITE>/rpc/devnet  Solana JSON-RPC (HTTP + WebSocket), proxied to the RPC provider by
 #                              Caddy, which adds the API key. The key is never in the bundle.
 #
 # Usage, from the repository root:
@@ -20,6 +20,10 @@
 #                           6-day "shortlived" profile. Needs 80/443 reachable from the internet.
 #   RPC_HOST   RPC provider host the /rpc proxy forwards to (default: devnet.helius-rpc.com)
 #
+# The RPC path names the network (/rpc/devnet) on purpose: wallet adapters infer which network to
+# ask the wallet for from the app's RPC URL, and read an unrecognised URL as mainnet. A bare /rpc
+# had Phantom simulate every devnet deposit on mainnet. vite.config.ts now refuses such a build.
+#
 # Secrets are read from relayer/.env (SOLANA_RPC_URL with ?api-key=, RELAYER_KEYPAIR) and sent over
 # ssh on stdin. Nothing secret is printed, passed on a command line, or written to disk locally.
 #
@@ -31,6 +35,8 @@ SITE=${SITE:?set SITE to the public IPv4 address or hostname}
 SSH_HOST=${SSH_HOST:-oracle}
 TLS_MODE=${TLS_MODE:-internal}
 RPC_HOST=${RPC_HOST:-devnet.helius-rpc.com}
+NETWORK=devnet
+RPC_PATH=/rpc/$NETWORK
 ROOT=$(git rev-parse --show-toplevel)
 HERE="$ROOT/deploy/oracle"
 ENV_FILE="$ROOT/relayer/.env"
@@ -82,8 +88,8 @@ build_app() { # build_app OUTDIR
   (cd "$ROOT/sdk" && npm run build >/dev/null)
   (cd "$work/app" &&
     env -u VITE_POOLS -u VITE_PROGRAM_ID \
-      VITE_SOLANA_NETWORK=devnet \
-      VITE_RPC_ENDPOINT="https://$SITE/rpc" \
+      VITE_SOLANA_NETWORK="$NETWORK" \
+      VITE_RPC_ENDPOINT="https://$SITE$RPC_PATH" \
       VITE_RELAYER_URL="https://$SITE/relayer" \
       sh -c 'npx tsc --noEmit && npx vite build --logLevel warn')
   rm -rf "$out"; mv "$work/app/dist" "$out"; rm -rf "$work"
@@ -146,10 +152,10 @@ render_caddyfile() {
       global="default_sni $SITE" ;;
     *) die "TLS_MODE must be internal or letsencrypt" ;;
   esac
-  SITE="$SITE" RPC_HOST="$RPC_HOST" TLS="$tls" GLOBAL="$global" python3 - "$HERE/Caddyfile.template" <<'PY'
+  SITE="$SITE" RPC_HOST="$RPC_HOST" RPC_PATH="$RPC_PATH" TLS="$tls" GLOBAL="$global" python3 - "$HERE/Caddyfile.template" <<'PY'
 import os, sys
 s = open(sys.argv[1], encoding="utf8").read()
-for k, v in {"@SITE@": os.environ["SITE"], "@RPC_HOST@": os.environ["RPC_HOST"],
+for k, v in {"@SITE@": os.environ["SITE"], "@RPC_HOST@": os.environ["RPC_HOST"], "@RPC_PATH@": os.environ["RPC_PATH"],
              "@TLS@": os.environ["TLS"], "@GLOBAL_OPTIONS@": os.environ["GLOBAL"]}.items():
     assert k in s, k
     s = s.replace(k, v)
@@ -234,8 +240,8 @@ systemctl is-active caddy sornadocash-relayer | paste -sd' ' | sed 's/^/  servic
 c() { curl -sk -m 15 --connect-to $SITE:443:127.0.0.1:443 "\$@"; }
 echo "  app:     \$(c -o /dev/null -w '%{http_code} %{size_download} bytes' https://$SITE/)"
 echo "  health:  \$(c https://$SITE/relayer/health)"
-echo "  rpc:     \$(c -H 'Origin: https://$SITE' -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getSlot"}' https://$SITE/rpc)"
-echo "  foreign: \$(c -o /dev/null -w '%{http_code}' -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' https://$SITE/rpc) (expect 403)"
+echo "  rpc:     \$(c -H 'Origin: https://$SITE' -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getSlot"}' https://$SITE$RPC_PATH)"
+echo "  foreign: \$(c -o /dev/null -w '%{http_code}' -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' https://$SITE$RPC_PATH) (expect 403)"
 sudo -n journalctl -u sornadocash-relayer -n 8 --no-pager -o cat | sed 's/^/  relayer log: /'
 REMOTE
 }

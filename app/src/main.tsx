@@ -8,20 +8,16 @@ import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 // critical (protobufjs arbitrary code execution, via @trezor/transport). Tree-shaking kept most
 // of it out of the bundle, but it was still installed and executing postinstall scripts on every
 // npm install, which is the wrong attack surface for an app that holds secret notes.
-import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
-import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 import './index.css';
 
 import App from './App';
 import { RPC_ENDPOINT } from './config';
+import { createWallets } from './wallets';
 
 function Providers({ children }: { children: React.ReactNode }) {
-  const wallets = useMemo(() => [
-    new PhantomWalletAdapter(),
-    new SolflareWalletAdapter(),
-  ], []);
+  const wallets = useMemo(() => createWallets(), []);
 
   return (
     <ConnectionProvider endpoint={RPC_ENDPOINT}>

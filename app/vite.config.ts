@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { getChainForEndpoint } from '@solana/wallet-standard-util';
 import react from '@vitejs/plugin-react';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'path';
@@ -128,7 +129,38 @@ function cspPlugin(env: Record<string, string | undefined>) {
   };
 }
 
-export default defineConfig(({ mode }) => {
+/**
+ * Refuse a build whose RPC URL would make wallets sign for a different network.
+ *
+ * The Wallet Standard adapter (Phantom, and Solflare's extension) does not ask the wallet which
+ * network it is on. It infers the network from the app's RPC URL with getChainForEndpoint: "devnet"
+ * in the URL means devnet, and any URL it does not recognise means MAINNET. A devnet build served
+ * through the same-origin proxy at https://<host>/rpc therefore had Phantom simulate every deposit on
+ * mainnet, where the wallet holds nothing: "not enough SOL", "simulation failed". Locally the RPC URL
+ * was devnet.helius-rpc.com, which is why it only appeared once deployed.
+ *
+ * Only the URL's origin is printed, because hosted RPC URLs carry the API key.
+ */
+function assertWalletChainMatches(env: Record<string, string | undefined>) {
+  const network = env.VITE_SOLANA_NETWORK ?? 'devnet';
+  const endpoint = env.VITE_RPC_ENDPOINT ?? `https://api.${network}.solana.com`;
+  const expected = network === 'mainnet-beta' ? 'solana:mainnet' : `solana:${network}`;
+  const chain = getChainForEndpoint(endpoint);
+  if (chain === expected) return;
+  let where = '(unparseable URL)';
+  try {
+    where = new URL(endpoint).origin;
+  } catch {
+    // keep the placeholder; never print the raw value
+  }
+  throw new Error(
+    `VITE_RPC_ENDPOINT (${where}/...) makes wallets sign for ${chain}, but this build is for ` +
+      `${network}. Wallet adapters infer the network from the RPC URL, so name it there, for ` +
+      `example https://<host>/rpc/${network}.`
+  );
+}
+
+export default defineConfig(({ mode, command }) => {
   // Must match how Vite resolves env for the CLIENT bundle, or the CSP and the code it is
   // meant to authorise silently disagree.
   //
@@ -144,6 +176,8 @@ export default defineConfig(({ mode }) => {
     string,
     string | undefined
   >;
+  // Builds only: the dev server may point at a local validator, and tests load this config too.
+  if (command === 'build') assertWalletChainMatches(env);
   return {
     // jsdom gives the leaf-cache tests a real localStorage.
     test: {

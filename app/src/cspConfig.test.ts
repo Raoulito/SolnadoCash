@@ -45,6 +45,9 @@ async function builtPolicy(envFile: string): Promise<string> {
   }
 }
 
+// Fixture URLs name the network ("/devnet") because a production build now refuses a devnet RPC URL
+// that wallet adapters would read as mainnet (see walletChain.test.ts). The origins are unchanged.
+//
 // vitest loads the app's own .env files into process.env before any test runs, and a shell variable
 // deliberately wins over a file, so the developer's local endpoint would mask the file under test.
 // Clear every VITE_ key for each test and put them back afterwards.
@@ -61,7 +64,7 @@ describe('production CSP follows the configured endpoints', () => {
 
   it('authorises an RPC endpoint that is configured in an .env file', async () => {
     const policy = await builtPolicy(
-      'VITE_RPC_ENDPOINT=https://rpc.example.test/?api-key=x\nVITE_RELAYER_URL=https://relay.example.test\n'
+      'VITE_RPC_ENDPOINT=https://rpc.example.test/devnet/?api-key=x\nVITE_RELAYER_URL=https://relay.example.test\n'
     );
     const connect = policy.split('; ').find((d) => d.startsWith('connect-src'))!;
     expect(connect).toContain('https://rpc.example.test');
@@ -71,8 +74,8 @@ describe('production CSP follows the configured endpoints', () => {
   });
 
   it('a shell variable still wins over the file', async () => {
-    process.env.VITE_RPC_ENDPOINT = 'https://shell.example.test';
-    const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://file.example.test\n');
+    process.env.VITE_RPC_ENDPOINT = 'https://shell.example.test/devnet';
+    const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://file.example.test/devnet\n');
     expect(policy).toContain('https://shell.example.test');
     expect(policy).not.toContain('https://file.example.test');
   });
@@ -80,7 +83,7 @@ describe('production CSP follows the configured endpoints', () => {
   it('authorises the relayer the bundle falls back to when none is configured (L-10)', async () => {
     // config.ts uses http://localhost:3000 when VITE_RELAYER_URL is unset. The policy added no
     // relayer origin in that case, so the built app blocked every relayer call it made.
-    const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://rpc.example.test\n');
+    const policy = await builtPolicy('VITE_RPC_ENDPOINT=https://rpc.example.test/devnet\n');
     const connect = policy.split('; ').find((d) => d.startsWith('connect-src'))!;
     expect(connect).toContain(RELAYER_URL_DEFAULT);
   });

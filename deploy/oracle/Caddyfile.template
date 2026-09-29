@@ -3,7 +3,7 @@
 # One origin serves everything, so the browser's CSP can be connect-src 'self':
 #   /           the static app
 #   /relayer/*  the relayer on 127.0.0.1:3000, prefix stripped
-#   /rpc        Solana JSON-RPC (HTTP and WebSocket), forwarded to the RPC provider with the API key
+#   @RPC_PATH@  Solana JSON-RPC (HTTP and WebSocket), forwarded to the RPC provider with the API key
 #               added here. The key never reaches the browser or the bundle.
 #
 # No access log is configured, deliberately: this server sees every user's IP next to their RPC
@@ -54,7 +54,8 @@
 		reverse_proxy 127.0.0.1:3000
 	}
 
-	handle /rpc {
+	# The path names the network: wallet adapters read the network from the app's RPC URL.
+	handle @RPC_PATH@ {
 		import rpc_proxy https://@RPC_HOST@
 	}
 
