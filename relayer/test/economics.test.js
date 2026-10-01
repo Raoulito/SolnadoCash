@@ -63,12 +63,14 @@ describe("economics", () => {
     // for a 165-byte SPL account rather than this program's 80-byte account.
     const cap = 100_000_000n / 50n;
     assert.ok(Number(cap) > DETERMINISTIC, `cap ${cap} must exceed cost ${DETERMINISTIC}`);
-    assert.equal(DETERMINISTIC, 1_452_680);
+    // 5,000 signature fee + 1,056,640 rent for the 80-byte nullifier account (devnet and mainnet,
+    // 2026-10-01; it was 1,447,680 under the earlier rent parameters).
+    assert.equal(DETERMINISTIC, 1_061_640);
   });
 
   it("names the minimum viable denomination, so a new rung cannot be added blindly", () => {
     const minViable = BigInt(DETERMINISTIC) * 50n;
-    assert.equal(minViable, 72_634_000n); // 0.0727 SOL
+    assert.equal(minViable, 53_082_000n); // 0.0531 SOL (0.0727 under the earlier rent)
     for (const d of LADDER) {
       assert.ok(d >= minViable, `rung ${d} is below the minimum viable ${minViable}`);
     }

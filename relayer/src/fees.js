@@ -8,10 +8,12 @@ const BASE_FEE = 5000;               // lamports per signature (Solana fixed)
 const COMPUTE_UNITS = 200_000;        // CU budget for withdraw tx (measured: ~100k, buffer 2x)
 // Nullifier account: 8-byte discriminator + NullifierAccount (32+32+8) = 80 bytes.
 const NULLIFIER_ACCOUNT_SIZE = 80;
-// Fallback rent for 80 bytes: (128 + 80) * 3480 * 2 = 1_447_680 lamports.
-// The previous value (2_039_280) is the rent for a 165-byte SPL token account and
-// over-charged the user by ~41% on this component (M-6).
-const NULLIFIER_RENT = 1_447_680;
+// Fallback rent for the 80-byte nullifier account, used only when the chain cannot be read and no
+// value has been read before: (128 + 80) * 5080 = 1_056_640 lamports. Rent sysvar on devnet and
+// mainnet, read 2026-10-01: 5,080 lamports per byte-year, exemption threshold 1 year. It was
+// (128 + 80) * 3480 * 2 = 1_447_680 under the earlier parameters, and 2_039_280 before M-6, which
+// is the rent for a 165-byte SPL token account. The live value is what is charged.
+const NULLIFIER_RENT = 1_056_640;
 const MARGIN = 1.5;                   // 50% margin on estimated gas cost
 const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000; // getRecentPrioritizationFees unit
 
@@ -67,7 +69,11 @@ export function priorityFeeLamports(priorityFeePerCU) {
 // Rent is a cluster parameter, so read it from the chain rather than trusting a
 // hardcoded constant (M-6). Cached per connection: different clusters can differ,
 // and a process-wide cache would leak one cluster's value into another.
+// Per connection: the last rent read from the chain and when. Re-read after RENT_TTL_MS, because rent
+// does change (the 80-byte figure fell from 1,447,680 to 1,056,640 lamports), and a value cached for
+// the life of the process kept charging the old figure until a restart. A failed read is never cached.
 const _nullifierRentByConnection = new WeakMap();
+const RENT_TTL_MS = 10 * 60_000;
 
 /**
  * Rent-exempt minimum for the nullifier account, in lamports.
@@ -81,19 +87,20 @@ const _nullifierRentByConnection = new WeakMap();
  * and has been retracted.)
  *
  * @param {import("@solana/web3.js").Connection} connection
+ * @param {() => number} [now] - clock, for tests
  * @returns {Promise<number>} lamports
  */
-export async function getNullifierRent(connection) {
+export async function getNullifierRent(connection, now = Date.now) {
   const cached = _nullifierRentByConnection.get(connection);
-  if (cached !== undefined) return cached;
-  let rent;
+  if (cached && now() - cached.at < RENT_TTL_MS) return cached.rent;
   try {
-    rent = await connection.getMinimumBalanceForRentExemption(NULLIFIER_ACCOUNT_SIZE);
+    const rent = await connection.getMinimumBalanceForRentExemption(NULLIFIER_ACCOUNT_SIZE);
+    _nullifierRentByConnection.set(connection, { rent, at: now() });
+    return rent;
   } catch {
-    rent = NULLIFIER_RENT;
+    // The last value read from the chain beats the constant; neither is cached as fresh.
+    return cached?.rent ?? NULLIFIER_RENT;
   }
-  _nullifierRentByConnection.set(connection, rent);
-  return rent;
 }
 
 /**

@@ -145,9 +145,10 @@ describe("fees", () => {
     });
 
     it("fallback constant is the real 80-byte rent, not the SPL token figure", () => {
-      // (128 + 80) * 3480 * 2 = 1_447_680. The old value 2_039_280 is the rent for
-      // a 165-byte SPL token account and over-charged by ~41% on this component.
-      assert.equal(NULLIFIER_RENT, (128 + 80) * 3480 * 2);
+      // (128 + 80) * 5080 = 1_056_640 under the rent parameters of 2026-10-01 (it was
+      // (128 + 80) * 3480 * 2 = 1_447_680 before). 2_039_280 is the rent for a 165-byte SPL token
+      // account and over-charged by ~41% on this component.
+      assert.equal(NULLIFIER_RENT, (128 + 80) * 5080);
       assert.notEqual(NULLIFIER_RENT, 2_039_280);
     });
   });
