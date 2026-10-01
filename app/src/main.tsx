@@ -15,6 +15,7 @@ import './index.css';
 import App from './App';
 import { RPC_ENDPOINT } from './config';
 import { createWallets } from './wallets';
+import { warmPoseidonWhenIdle } from './utils/warmup';
 
 function Providers({ children }: { children: React.ReactNode }) {
   const wallets = useMemo(() => createWallets(), []);
@@ -37,3 +38,6 @@ createRoot(document.getElementById('root')!).render(
     </Providers>
   </StrictMode>,
 );
+
+// Poseidon is loaded on first use; fetch and build it in the background so deposits don't wait.
+warmPoseidonWhenIdle();

@@ -2,9 +2,17 @@
 // T32 — generateWithdrawProof (uses snarkjs + WASM from circuits build)
 
 import { PublicKey } from "@solana/web3.js";
-import { buildPoseidon } from "circomlibjs";
-import * as snarkjs from "snarkjs";
 import type { SecretNote } from "./note.js";
+
+// circomlibjs (Poseidon, with 1.7 MB of round constants) and snarkjs are loaded on first use, not at
+// import time. Statically imported, they were most of the JavaScript a browser had to download and
+// parse before a page using this SDK could render anything, although only initPoseidon() and
+// generateWithdrawProof() need them, and both are already async. Bundlers put each in its own chunk.
+// The promises are cached, so each library is loaded at most once.
+let _circomlib: Promise<typeof import("circomlibjs")> | undefined;
+let _snarkjs: Promise<typeof import("snarkjs")> | undefined;
+const loadCircomlib = () => (_circomlib ??= import("circomlibjs"));
+const loadSnarkjs = () => (_snarkjs ??= import("snarkjs"));
 
 // BN254 scalar field prime (Fr) — Poseidon and circuits operate over this field.
 // Pubkeys (256 bits) can exceed Fr (~254 bits), must reduce mod Fr before hashing.
@@ -46,12 +54,25 @@ export interface CircuitPaths {
 
 let _poseidon: any;
 let _F: any;
+let _poseidonReady: Promise<void> | undefined;
 
-export async function initPoseidon(): Promise<void> {
-  if (!_poseidon) {
-    _poseidon = await buildPoseidon();
-    _F = _poseidon.F;
-  }
+/**
+ * Build the Poseidon hasher once. Concurrent callers share one build: two components initialising at
+ * the same moment used to build it twice.
+ */
+export function initPoseidon(): Promise<void> {
+  if (_poseidon) return Promise.resolve();
+  _poseidonReady ??= loadCircomlib()
+    .then(({ buildPoseidon }) => buildPoseidon())
+    .then((p) => {
+      _poseidon = p;
+      _F = p.F;
+    })
+    .catch((e) => {
+      _poseidonReady = undefined; // a failed load (offline) may be retried
+      throw e;
+    });
+  return _poseidonReady;
 }
 
 export function poseidonHash(...inputs: bigint[]): bigint {
@@ -375,7 +396,8 @@ export async function generateWithdrawProof(
     relayerFeeMax: quote.relayerFeeMax.toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+  const { groth16 } = await loadSnarkjs();
+  const { proof, publicSignals } = await groth16.fullProve(
     circomInputs,
     circuitPaths.wasmPath,
     circuitPaths.zkeyPath
