@@ -206,13 +206,24 @@ export default defineConfig(({ mode, command }) => {
         'circomlibjs',
         'snarkjs',
       ],
-      alias: {
+      alias: [
         // Make the buffer shim resolvable from any location (including ../sdk/node_modules)
-        'vite-plugin-node-polyfills/shims/buffer': path.resolve(
-          __dirname,
-          'node_modules/vite-plugin-node-polyfills/shims/buffer'
-        ),
-      },
+        {
+          find: 'vite-plugin-node-polyfills/shims/buffer',
+          replacement: path.resolve(__dirname, 'node_modules/vite-plugin-node-polyfills/shims/buffer'),
+        },
+        // The SDK only uses buildPoseidon from circomlibjs. The package entry re-exports every
+        // primitive in the library (babyjub, eddsa, mimc, pedersen, SMT, contract generators, two more
+        // Poseidon builds with their own constant tables) and declares no sideEffects, so the bundler
+        // keeps all of it: the Poseidon chunk was 1,263 KB compressed. The module that defines
+        // buildPoseidon needs only its constants and ffjavascript. Exact match only, so nothing else
+        // is affected. app/security/browser_prove.mjs proves a withdrawal with it in Chromium and
+        // checks the proof against the deployed verification key.
+        {
+          find: /^circomlibjs$/,
+          replacement: path.resolve(__dirname, 'node_modules/circomlibjs/src/poseidon_wasm.js'),
+        },
+      ],
     },
   };
 });

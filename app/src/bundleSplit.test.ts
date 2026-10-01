@@ -49,6 +49,12 @@ describe('startup bundle', () => {
 
       expect(startupCode, 'circomlibjs (Poseidon) is loaded at startup').not.toContain(POSEIDON_C0);
       expect(startupCode, 'snarkjs is loaded at startup').not.toContain(SNARKJS);
+
+      // Only circomlibjs's Poseidon is used. Its other primitives (EdDSA, MiMC, the sparse Merkle
+      // tree...) used to ship in the Poseidon chunk, 480 KB compressed (vite.config.ts alias).
+      for (const unused of ['buildEddsa', 'buildMimc7', 'SMTMemDb']) {
+        expect(allCode, `unused circomlibjs code (${unused}) is in the bundle`).not.toContain(unused);
+      }
     } finally {
       Object.assign(process.env, saved);
       rmSync(out, { recursive: true, force: true });
