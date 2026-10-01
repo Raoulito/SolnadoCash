@@ -211,8 +211,12 @@ cmd_release() {
   stage_release "$stage"
 
   say "uploading"
-  remote 'rm -rf ~/sornado-release && mkdir -p ~/sornado-release'
-  rsync -a --delete "$stage/" "$SSH_HOST:sornado-release/"
+  # The server keeps the previous release's staging copy, and rsync compares by checksum (the stage
+  # is rebuilt locally, so every mtime is new), so only files whose content changed are sent. The
+  # circuits and their compressed copies, about 18 MB, are unchanged between most releases.
+  remote 'mkdir -p ~/sornado-release'
+  rsync -a --delete --checksum --stats "$stage/" "$SSH_HOST:sornado-release/" |
+    awk -F': ' '/^Total file size/ {t=$2} /^Total bytes sent/ {s=$2} END {gsub(/[^0-9]/, "", t); gsub(/[^0-9]/, "", s); printf "  sent %d KB of a %d KB release\n", s/1024, t/1024}'
 
   say "installing on $SSH_HOST"
   remote 'bash -s' <<'REMOTE'
@@ -244,7 +248,8 @@ sudo -n systemctl enable sornadocash-relayer >/dev/null 2>&1
 sudo -n systemctl restart sornadocash-relayer
 sleep 4
 systemctl is-active caddy sornadocash-relayer | paste -sd' ' | sed 's/^/  services (caddy, relayer): /'
-rm -rf "$R"
+# Kept for the next release's checksum sync; only the dependencies go (npm ci reinstalls them).
+rm -rf "$R/relayer/node_modules"
 # Neither service may ever print the RPC key (the packaged Caddy unit used to, via --environ).
 leaks=$(sudo -n sh -c 'k=$(sed -n "s/^HELIUS_API_KEY=//p" /etc/sornadocash/caddy.env); journalctl -u caddy -u sornadocash-relayer --since "@'"$started"'" --no-pager -o cat | grep -cF -- "$k"' || true)
 [ "$leaks" = 0 ] || { echo "  THE RPC KEY WAS LOGGED ($leaks lines since the restart)" >&2; exit 1; }
