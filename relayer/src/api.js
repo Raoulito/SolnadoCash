@@ -11,7 +11,6 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { PublicKey } from "@solana/web3.js";
 import {
-  computeRelayerFeeMax,
   computeRelayerCost,
   computeTreasuryFee,
   computeMinUserReceives,
@@ -20,6 +19,7 @@ import {
   BASE_FEE,
   getNullifierRent,
   planFee,
+  feeMaxFromCost,
 } from "./fees.js";
 import { verifyProofOffChain } from "./verify.js";
 import { findVaultPda, submitWithdraw } from "./tx.js";
@@ -210,7 +210,8 @@ export function createApp({ connection, relayerKeypair, programId }) {
         });
       }
 
-      const withMargin = BigInt(await computeRelayerFeeMax(connection, writable));
+      // Same snapshot as the cost checked above: one RPC call, and a ceiling consistent with it.
+      const withMargin = BigInt(feeMaxFromCost(relayerCost));
       const relayerFeeMax = withMargin <= onChainCap ? withMargin : onChainCap;
       const estimatedUserReceives = computeMinUserReceives(
         denomination,

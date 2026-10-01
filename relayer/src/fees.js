@@ -186,8 +186,18 @@ export async function computeRelayerCost(connection, writableAccounts) {
  * @returns {Promise<number>} relayerFeeMax in lamports
  */
 export async function computeRelayerFeeMax(connection, writableAccounts) {
-  const gasCost = await computeRelayerCost(connection, writableAccounts);
-  return Math.ceil(gasCost * MARGIN);
+  return feeMaxFromCost(await computeRelayerCost(connection, writableAccounts));
+}
+
+/**
+ * The ceiling for a cost already computed: cost plus the margin. /fee_quote uses this with the cost
+ * it has just checked against the pool's cap, so both come from one fee snapshot and one RPC call.
+ *
+ * @param {number} cost - lamports, from computeRelayerCost
+ * @returns {number} lamports
+ */
+export function feeMaxFromCost(cost) {
+  return Math.ceil(cost * MARGIN);
 }
 
 /**
