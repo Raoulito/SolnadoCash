@@ -71,9 +71,10 @@ burn the protocol fee on every withdrawal of that note.
 **Denomination floor** — `initialize_pool` rejects any denomination whose worst-case payout
 (`denomination - denomination/500 - denomination/50`) falls below `Rent::minimum_balance(0)`,
 read from the live rent sysvar. Privacy requires withdrawing to a *fresh* address, and the
-runtime refuses to leave a new account below rent-exemption, so a pool under roughly 910,900
-lamports would accept deposits and then be unable to pay them out. Measured boundary: 890,879
-lamports rejected, 890,880 accepted.
+runtime refuses to leave a new account below rent-exemption, so a pool whose payout would fall
+under that minimum would accept deposits and then be unable to pay them out. The minimum is
+650,240 lamports on devnet and mainnet as of 2026-10-01 (it was 890,880 under the earlier rent
+parameters, and the boundary was measured then: 890,879 lamports rejected, 890,880 accepted).
 
 **Pool isolation** — Pool PDA seeds include the admin key and a version byte, preventing treasury hijacking and ensuring V1/V2 pools have distinct addresses:
 ```
@@ -191,19 +192,21 @@ near the start, and the worst case is a full 256-entry scan.
 Anyone can run a relayer. The relayer's role is to submit the withdrawal transaction on behalf of the user, breaking the gas-payer link. Without a relayer, the user's withdrawal wallet would need SOL for gas — potentially linking it to their identity.
 
 **How relayer fees work:**
-- The relayer computes its real cost: `base_fee + priority_fee + nullifier_rent`
+- The relayer computes its real cost: `base_fee + priority_fee + nullifier_rent`, with the
+  priority fee estimated for the accounts a withdrawal locks and the rent read from the chain
+  (re-read every ten minutes)
 - Applies a 50% margin: `relayer_fee_max = cost * 1.5`
 - The user locks `relayer_fee_max` into their ZK proof before submission
 - On-chain enforcement: `fee_taken <= relayer_fee_max` (the relayer cannot take more than agreed)
 
 **Fee limits as defense:** The protocol cannot verify actual gas costs on-chain (Solana has no gas oracle), so it bounds them instead:
 
-- **On-chain cap** — `relayer_fee_max <= denomination / 50` (2%) is enforced in `withdraw`. A withdrawal costs a relayer ~0.0031 SOL at rest, so this leaves ample room for congestion while making a confiscatory fee unrepresentable. The user always keeps at least 97.8%.
+- **On-chain cap** — `relayer_fee_max <= denomination / 50` (2%) is enforced in `withdraw`. A withdrawal costs a relayer about 0.00106 SOL at rest, so this leaves ample room for congestion while making a confiscatory fee unrepresentable. The user always keeps at least 97.8%.
 - **Client-side validation** — the SDK's `validateFeeQuote` recomputes every figure locally from the denomination, rejects quotes above the cap before a proof is generated, and rejects a relayer whose advertised "you receive" figure contradicts its own fee ceiling.
 - **Explicit consent** — the withdraw UI shows the maximum fee and the guaranteed minimum received *before* the ceiling is bound into the proof.
 - **Honest reference relayer** — it charges its measured cost (base fee + priority fee + nullifier rent), not the ceiling, and attaches the priority fee it bills for.
 - **Congestion cannot bleed the relayer** — the ceiling is frozen into the proof at quote time, but
-  the transaction lands 30 to 90 seconds later, after proof generation. If congestion rises in
+  the transaction lands seconds to a minute later, after proof generation. If congestion rises in
   between, the relayer caps the priority fee it attaches at what the ceiling reimburses, so it
   degrades to slower inclusion rather than paying the difference out of pocket. Charging the ceiling
   while attaching the full estimate was an unbounded loss and therefore an economic denial of
@@ -221,16 +224,17 @@ What the pool admin **cannot** do, enforced by the program:
 - Move vault funds through any instruction — only a valid ZK proof authorizes a transfer
 
 > **The program is currently upgradeable, and that overrides everything above.** The
-> BPF upgrade authority is live and is the same key as the pool admin and the treasury.
-> Whoever holds it can deploy new code that drains every vault, because the vaults are
-> program-owned PDAs. Verify for yourself:
+> BPF upgrade authority is live. Whoever holds it can deploy new code that drains every
+> vault, because the vaults are program-owned PDAs. Verify for yourself:
 > `solana program show DMAPWBXb5w2KZkML2SyV2CtZDfbwNKqkWL3scQKXUF59 --url devnet`
 >
-> This is deliberate while the protocol is pre-launch and under active repair. It must
-> be resolved before mainnet by setting the authority to `--final` or transferring it to
-> a timelocked multisig, and by splitting the admin, treasury and upgrade roles onto
-> distinct keys. Until then, this protocol is custodial in practice. Treat any claim of
-> trustlessness as false while that key exists.
+> The roles are now on separate keys: the upgrade authority is `UPGR5rk6…`, the four
+> advertised pools' admin is `PooLKrrU…` and their treasury is `TREAANHx…` (read from the
+> chain on 2026-10-01). The relayer runs as its own hot wallet and refuses to start as the
+> upgrade authority. Separating the keys limits what any one leaked key can do; it does not
+> change the paragraph above. That must be resolved before mainnet by setting the authority
+> to `--final` or transferring it to a timelocked multisig. Until then, this protocol is
+> custodial in practice. Treat any claim of trustlessness as false while that key exists.
 
 ### Censorship Resistance
 
@@ -249,8 +253,8 @@ treasury_fee = denomination / 500
 Integer division only. Applied to the raw denomination, never to `denomination - relayer_fee`. No overflow possible for any valid u64.
 
 **An empty treasury never blocks a withdrawal.** Solana rejects any transaction that leaves an
-account holding lamports but below its rent-exempt minimum (890,880 lamports for a data-less
-account on mainnet parameters). On the 0.1 SOL rung the fee is 200,000 lamports, so crediting a
+account holding lamports but below its rent-exempt minimum (650,240 lamports for a data-less
+account on devnet and mainnet today). On the 0.1 SOL rung the fee is 200,000 lamports, so crediting a
 treasury holding nothing used to revert the whole withdrawal, and sweeping the treasury to zero,
 which is how fees are collected, froze every 0.1 SOL withdrawal until it was topped up. When the
 credit would leave the treasury below its minimum, the fee now goes to the recipient instead and the
@@ -261,8 +265,8 @@ For a 1 SOL pool:
 | Recipient | Amount |
 |-----------|--------|
 | Treasury | 0.002 SOL |
-| Relayer | ~0.003 SOL (dynamic) |
-| User receives | ~0.995 SOL |
+| Relayer | ~0.001 SOL (dynamic) |
+| User receives | ~0.997 SOL |
 
 ## Denominations
 
@@ -289,8 +293,8 @@ added intermediate ones.
 because someone will use it and believe they are private.
 
 Splitting is cheap, so a coarse ladder costs little: the 0.2% protocol fee is proportional and
-therefore unaffected by splitting, and the relayer's flat cost of roughly 0.003 SOL per
-withdrawal comes to about 0.3% when moving 7 SOL as seven 1 SOL withdrawals. The real cost of
+therefore unaffected by splitting, and the relayer's flat cost of roughly 0.001 SOL per
+withdrawal comes to about 0.1% when moving 7 SOL as seven 1 SOL withdrawals. The real cost of
 coarseness is operational — many sequential withdrawals take time and create timing correlation
 — which is the actual argument for adding a larger rung once volume exists.
 
@@ -309,27 +313,30 @@ must be settled before mainnet.
 ### A note on the relayer fee cap
 
 The on-chain cap is proportional (`denomination / 50`) while a relayer's real cost is roughly
-0.003 SOL at any size, so the cap does not fit a wide range of denominations:
+0.001 SOL at any size, so the cap does not fit a wide range of denominations:
 
 | Rung | 2% cap | Real cost | Cap ÷ cost |
 |------|--------|-----------|------------|
-| 0.1 SOL | 0.002 | 0.0014527 | 1.38x |
-| 1 SOL | 0.02 | 0.0014527 | 13.8x |
-| 10 SOL | 0.2 | 0.0014527 | 137x |
-| 100 SOL | 2 | 0.0014527 | 1,376x |
+| 0.1 SOL | 0.002 | 0.0010616 | 1.88x |
+| 1 SOL | 0.02 | 0.0010616 | 18.8x |
+| 10 SOL | 0.2 | 0.0010616 | 188x |
+| 100 SOL | 2 | 0.0010616 | 1,884x |
 
-Real cost is `signature fee + nullifier rent` = 5,000 + 1,447,680 = 1,452,680 lamports, plus any
-priority fee. It is dominated by rent, which is flat, so it does not scale with the denomination.
-Confirmed against a live devnet withdrawal: the relayer took exactly 1,452,680 lamports and its net
-balance change was 0.
+Real cost is `signature fee + nullifier rent` = 5,000 + 1,056,640 = 1,061,640 lamports, plus any
+priority fee, with the rent as it stands on devnet and mainnet on 2026-10-01 (5,080 lamports per
+byte-year, a 1-year exemption threshold). It is dominated by rent, which is flat, so it does not
+scale with the denomination. Confirmed against a live devnet withdrawal on 2026-09-29: the
+nullifier account was funded with exactly 1,056,640 lamports, the relayer took 1,061,640 and its net
+balance change was 0. The rent was 1,447,680 under the earlier parameters, and the relayer re-reads
+it from the chain every ten minutes.
 
 Every rung currently clears cost, including 0.1 SOL. An earlier version of this table claimed the
 0.1 SOL cap sat *below* cost, which was true against the pre-M-6 rent figure of 2,039,280 lamports
 (the rent for a 165-byte SPL token account, not the 80-byte account this program creates). Fixing
 the rent made that rung profitable and the claim was not updated. A relayer breaks even while
-`denomination / 50 >= 5,000 + rent`, so the minimum viable denomination today is 0.0727 SOL, and
-0.1 SOL tolerates about a 38% rent increase before it would need subsidising. On the 100 SOL rung
-the cap permits a 2 SOL fee for work costing 0.0015, so it bounds almost nothing. The withdraw screen therefore warns on the
+`denomination / 50 >= 5,000 + rent`, so the minimum viable denomination today is 0.0531 SOL, and
+0.1 SOL tolerates about an 89% rent increase before it would need subsidising. On the 100 SOL rung
+the cap permits a 2 SOL fee for work costing 0.001, so it bounds almost nothing. The withdraw screen therefore warns on the
 **absolute** fee rather than the percentage, because "2.00%" looks identical and harmless at every
 denomination. A cap of the shape `max(floor, min(denomination/50, ceiling))` is still owed, since
 relayer cost is denomination-independent and the cap mostly should not scale.
@@ -369,7 +376,8 @@ scripts/        Trusted setup, CU benchmarks, devnet verification, pool deployme
 ### Relayer (Node.js)
 - `GET /fee_quote?pool=<address>` — Dynamic fee based on current network conditions
 - `POST /submit_proof` — Validates proof off-chain, then submits atomic on-chain transaction
-- `GET /health` — Balance monitoring, alerts below 5 SOL
+- `GET /health` — Balance check. Alerts are logged below 5 SOL (warning) and 1 SOL (critical) by
+  default; set `RELAYER_ALERT_SOL` and `RELAYER_CRITICAL_SOL` for a small hot wallet
 
 ### Monitoring (Node.js)
 
@@ -401,10 +409,10 @@ npm run once            # single pass; or `npm start` to poll
 
 ### SDK (TypeScript)
 ```typescript
-import { generateNote, decodeNote } from "@solnadocash/sdk/note";
-import { generateWithdrawProof, MerkleTree } from "@solnadocash/sdk/proof";
-import { getFeeQuote, computeTreasuryFee } from "@solnadocash/sdk/fees";
-import { generateStealthAddress } from "@solnadocash/sdk/stealth";
+import {
+  generateNote, decodeNote, generateWithdrawProof, MerkleTree,
+  getFeeQuote, validateFeeQuote, computeTreasuryFee,
+} from "@solnadocash/sdk";
 
 // 1. Generate a secret note
 const note = generateNote(1_000_000_000n, poolAddress);
@@ -413,15 +421,23 @@ console.log(note.encoded); // "sndo_<pool>_<denom>_<nullifier><secret>"
 // 2. Get fee quote from relayer
 const quote = await getFeeQuote("https://your-relayer-url.com", poolAddress);
 
-// 3. Generate ZK proof (off-chain, ~2s)
+// 3. Generate the ZK proof, off-chain: about 2 s on a recent laptop, 8 to 11 s on a CPU
+//    emulated 6x slower (app/security/prove_timing.mjs)
 const { proof, publicSignals } = await generateWithdrawProof(
   note, quote, recipientAddress, merkleTree, circuitPaths
 );
 
-// 4. Submit to relayer
+// 4. Submit to the relayer, with the fee ceiling that is bound into the proof
 const res = await fetch(relayerUrl + "/submit_proof", {
   method: "POST",
-  body: JSON.stringify({ proof, publicSignals, poolAddress, recipient })
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    proof,
+    publicSignals: publicSignals.map(String),
+    poolAddress: poolAddress.toBase58(),
+    recipient: recipientAddress.toBase58(),
+    relayerFeeMax: quote.relayerFeeMax.toString(),
+  }),
 });
 ```
 
@@ -462,11 +478,19 @@ cd relayer && npm test
 # SDK
 cd sdk && npm test
 
-# Frontend (vitest + eslint)
+# Frontend: vitest, then real-browser checks in Chromium (two tabs sharing note storage, a
+# withdrawal proved under the production CSP, both modals reachable on small screens, the
+# wrong-network modal in the built app), then eslint
 cd app && npm test && npm run lint
+
+# Proof time in a real browser, on this machine and on CPUs emulated 2, 4 and 6x slower
+node app/security/prove_timing.mjs
 
 # Monitor
 cd monitor && npm test
+
+# Beta numbers from the chain: deposits, withdrawals, depositing wallets per pool
+cd monitor && POOLS=<pool,pool,...> npm run stats -- --since 2026-10-06
 
 # Pool layout: verify every off-chain byte offset against the on-chain struct
 npm run check:layout
@@ -514,10 +538,10 @@ Whoever held that toxic waste can forge withdrawal proofs and drain every pool. 
 this document matters more than this sentence. A multi-party ceremony is a prerequisite for
 mainnet.
 
-**The program is upgradeable and the keys are not separated.** See *Admin Powers* above: the
-upgrade authority, the pool admin and the treasury are the same key today, and that key can
-deploy code that moves every vault. Treat the protocol as custodial until it is `--final` or
-behind a timelocked multisig.
+**The program is upgradeable.** See *Admin Powers* above: the upgrade authority, the pool admin
+and the treasury are now separate keys, but the upgrade authority alone can deploy code that moves
+every vault. Treat the protocol as custodial until it is `--final` or behind a timelocked
+multisig.
 
 **Loss is bounded, at least.** `withdraw` requires `vault.lamports() >= denomination`, so total
 outflow can never exceed total deposits even if proof verification were broken outright — a
@@ -525,8 +549,9 @@ soundness failure drains a pool, not the chain. Proven in
 `litesvm-tests/tests/outflow_cap.rs`, which also shows a fully drained vault retains only its
 rent reserve.
 
-**Merkle reconstruction does not scale.** Withdrawing rebuilds the tree from deposit logs, one
-`getTransaction` per deposit, with no indexer. Known leaves are cached locally so a returning
+**Merkle reconstruction does not scale.** Withdrawing rebuilds the tree from the deposit
+instructions themselves (not from logs, which the runtime truncates), one `getTransaction` per
+transaction that touched the pool, with no indexer. Known leaves are cached locally so a returning
 user pays only for new deposits, and the rebuilt tree is verified against the on-chain root
 before proving, so it fails loudly rather than producing an unprovable note — but a first-time
 user with a cold cache still pays O(deposits), and public RPC endpoints rate-limit and prune
@@ -537,7 +562,8 @@ four-rung ladder is a deliberate attempt to concentrate what liquidity exists ra
 missing feature. Even so, on a young deployment a rung may hold a handful of deposits, and a
 withdrawal from a pool with one deposit is fully linkable regardless of the ZK proof. The
 protocol cannot fix this, only depositors can. The UI does not display the per-pool deposit
-count: at deposit time that number is close to meaningless, since what matters is how many
+count (only how full the pool is, as a percentage of its capacity): at deposit time that number
+is close to meaningless, since what matters is how many
 deposits exist when you eventually withdraw, and a prominent "0 deposits" discourages the first
 depositors a pool needs before it can protect anyone. The tradeoff is that a user can no longer
 see from the UI whether they are withdrawing into a set of three or three hundred; that figure is
@@ -581,11 +607,13 @@ several fixes introduced fresh defects. The find rate has never reached zero, wh
 available evidence that more bugs remain. Treat "no known bugs" as the claim being made here —
 not "no bugs".
 
-What the tests do and do not establish. Verified: 42 Rust unit and property tests (including a
-differential test of the incremental Merkle insert against an independent recomputation, and a
-cross-language root vector pinned against the SDK), 12 in-process on-chain tests including a
-sequence fuzzer that has run 24,000+ steps against 7 invariants and 12 attack moves, 39/39
-live devnet checks, 96 SDK, 52 relayer, 88 front-end and 25 monitor tests. `circomspect` reports no issues
+What the tests do and do not establish. Verified, as of 2026-10-01: 47 Rust unit and property
+tests (including a differential test of the incremental Merkle insert against an independent
+recomputation, and a cross-language root vector pinned against the SDK), 13 in-process on-chain
+tests including a sequence fuzzer that has run 24,000+ steps against 7 invariants and 12 attack
+moves, 33 on a local validator, 39/39 live devnet checks, 98 SDK, 110 relayer (including a full
+deposit and relayed withdrawal on devnet), 200 front-end plus four real-browser checks, and 32
+monitor tests. `circomspect` reports no issues
 above INFO on any circuit, and `snarkjs r1cs info` confirms the withdraw circuit's interface
 exactly: 3 public inputs, 0 outputs, 46 private inputs.
 
