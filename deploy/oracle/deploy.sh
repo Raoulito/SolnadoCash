@@ -97,6 +97,23 @@ build_app() { # build_app OUTDIR
   rm -f "$out/_headers"
 }
 
+precompress() { # precompress DIR: zstd -19 and gzip -9 copies next to every compressible file
+  # Caddy compresses on the fly only for content types it recognises, and at a fast level. The proving
+  # key is served as application/octet-stream, which it skips, so the 5.3 MB file went out raw. Done
+  # once here at maximum level, served by file_server's "precompressed": the proving key goes out as
+  # 2.8 MB, and a full withdrawal's downloads drop from about 7.9 MB to 5.3 MB.
+  command -v zstd >/dev/null || die "zstd is required to build a release (apt install zstd)"
+  local f n=0
+  while IFS= read -r -d '' f; do
+    # wlog=23: browsers refuse zstd content-encoding with a window above 8 MiB (RFC 9659).
+    zstd -19 -T0 --zstd=wlog=23 -q -f -o "$f.zst" "$f"
+    gzip -9 -n -c "$f" > "$f.gz"
+    n=$((n + 1))
+  done < <(find "$1" -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' \
+             -o -name '*.wasm' -o -name '*.zkey' -o -name '*.json' -o -name '*.txt' \) -size +1k -print0)
+  echo "  precompressed $n files (zstd -19, gzip -9)"
+}
+
 check_bundle() { # check_bundle DIR: refuse to ship a bundle that knows the RPC key or provider
   local dir=$1 key
   key=$(env_value SOLANA_RPC_URL | sed -n 's/.*[?&]api-key=\([^&]*\).*/\1/p')
@@ -168,6 +185,7 @@ stage_release() { # stage_release DIR: everything that goes to the server, nothi
   say "building the app for https://$SITE (working tree)"
   build_app "$stage/app"
   check_bundle "$stage/app"
+  precompress "$stage/app"   # after the leak check, which reads the plain files
   render_headers "$stage/app" > "$stage/sornadocash-headers.caddy"
   render_caddyfile > "$stage/Caddyfile"
   cp "$HERE/sornadocash-relayer.service" "$HERE/caddy-sornadocash.conf" "$stage/"

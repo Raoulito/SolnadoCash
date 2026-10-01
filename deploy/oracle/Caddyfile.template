@@ -62,7 +62,11 @@
 	handle {
 		root * /srv/sornadocash/app
 		try_files {path} /index.html
-		file_server
+		# Serve the .zst/.gz copies made at build time (deploy.sh precompress), chosen by the
+		# browser's Accept-Encoding. Files without a copy fall back to the on-the-fly encode above.
+		file_server {
+			precompressed zstd gzip
+		}
 	}
 
 	# Security headers, including the CSP extracted from the built index.html.
