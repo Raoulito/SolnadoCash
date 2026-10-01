@@ -65,12 +65,15 @@ describe('denomination ladder', () => {
     expect(POOLS.length).toBeLessThanOrEqual(4);
   });
 
-  it('documents that the proportional fee cap is below cost at the bottom rung', () => {
-    // The cap is denomination/50 while a relayer's real cost is ~0.003 SOL at any size, so on
-    // the 0.1 SOL rung the cap sits BELOW cost and relayers subsidise the withdrawal. This is
-    // why the withdraw screen warns on the ABSOLUTE fee rather than the percentage, and why a
-    // floor/ceiling cap shape is still owed.
-    const REAL_COST = 3_000_000n; // ~0.003 SOL
-    expect(POOLS[0].denominationLamports / 50n).toBeLessThan(REAL_COST);
+  it('documents that the proportional fee cap clears the real cost on every rung, by far on the upper ones', () => {
+    // A relayer's real cost is about 0.00106 SOL at any size: the 5,000 lamport signature fee plus
+    // 1,056,640 of rent for the 80-byte nullifier account (devnet and mainnet, 2026-10-01). The cap
+    // is denomination/50, so even the 0.1 SOL rung clears it, and on the 100 SOL rung the cap is
+    // about 1,900x cost. That is why the withdraw screen warns on the ABSOLUTE fee rather than the
+    // percentage, and why a floor/ceiling cap shape is still owed. (This test used to assert that
+    // the 0.1 SOL cap sat below a cost of 0.003 SOL, a figure that was never the real cost.)
+    const REAL_COST = 5_000n + 1_056_640n;
+    for (const p of POOLS) expect(p.denominationLamports / 50n).toBeGreaterThan(REAL_COST);
+    expect(POOLS[POOLS.length - 1].denominationLamports / 50n / REAL_COST).toBeGreaterThan(1_000n);
   });
 });

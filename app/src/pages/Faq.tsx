@@ -115,7 +115,7 @@ export default function Faq({ onGoToDeposit }: FaqProps) {
             Enter any destination address. A fresh, empty wallet is best. Withdrawing to a wallet
             already tied to your name gives away what you just protected.
           </Step>
-          <Step n={6} title="Wait about 30 to 60 seconds">
+          <Step n={6} title="Wait about 15 to 40 seconds">
             Your browser is building the proof. Keep the page open. When it finishes, a relayer
             submits the transaction for you.
           </Step>
@@ -142,11 +142,11 @@ export default function Faq({ onGoToDeposit }: FaqProps) {
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-400">Relayer fee</span>
-            <span className="text-zinc-200 tnum">around 0.003 SOL</span>
+            <span className="text-zinc-200 tnum">around 0.001 SOL</span>
           </div>
           <div className="border-t border-zinc-700 pt-2 flex justify-between text-sm">
             <span className="text-zinc-300 font-medium">On 1 SOL you receive</span>
-            <span className="text-zinc-100 font-semibold tnum">about 0.995 SOL</span>
+            <span className="text-zinc-100 font-semibold tnum">about 0.997 SOL</span>
           </div>
         </div>
         <p className="text-zinc-500 text-xs leading-relaxed">

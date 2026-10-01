@@ -27,7 +27,7 @@ type Step = 'paste' | 'recipient' | 'confirm' | 'progress' | 'done';
 
 const PROGRESS_STEPS: ProgressStep[] = [
   { label: 'Fetching fee quote & Merkle tree', estimatedSeconds: 10 },
-  { label: 'Generating ZK proof', estimatedSeconds: 30 },
+  { label: 'Generating ZK proof', estimatedSeconds: 15 },
   { label: 'Submitting to relayer', estimatedSeconds: 10 },
 ];
 
@@ -95,11 +95,12 @@ export default function Withdraw() {
 
   /**
    * The on-chain cap is proportional (denomination/50), and a relayer's real cost is roughly
-   * 0.003 SOL whatever the denomination. So on the upper rungs of the ladder the percentage
-   * stops being a meaningful protection: 2% of 1000 SOL is 20 SOL for work that costs 0.003.
+   * 0.001 SOL whatever the denomination (the signature fee plus the nullifier account's rent). So
+   * on the upper rungs the percentage stops being a meaningful protection: 2% of 100 SOL is 2 SOL
+   * for work that costs 0.001.
    * "2.00%" reads as harmless at every size, so the absolute figure is what gets flagged.
    */
-  const FEE_SANITY_LAMPORTS = 50_000_000n; // 0.05 SOL — ~16x a relayer's real cost
+  const FEE_SANITY_LAMPORTS = 50_000_000n; // 0.05 SOL, about 47x a relayer's real cost
   const feeLooksExcessive =
     breakdown !== null && breakdown.relayerFeeMax > FEE_SANITY_LAMPORTS;
 
@@ -565,7 +566,8 @@ export default function Withdraw() {
 
         <div className="bg-zinc-800/30 rounded-xl p-4">
           <p className="text-zinc-500 text-xs leading-relaxed">
-            Proof generation takes <strong className="text-zinc-400">30-60 seconds</strong>.
+            This usually takes <strong className="text-zinc-400">15 to 40 seconds</strong>, up to a
+            minute on an older phone or a slow connection.
             The ZK proof is computed in your browser, and your secret note never leaves this device.
           </p>
         </div>
@@ -577,7 +579,7 @@ export default function Withdraw() {
             </p>
             <p className="text-amber-400/70 text-xs leading-relaxed">
               The relayer may take up to {(Number(breakdown.relayerFeeMax) / 1e9).toFixed(4)}{' '}
-              SOL. Submitting a withdrawal costs a relayer roughly 0.003 SOL, so this is far
+              SOL. Submitting a withdrawal costs a relayer roughly 0.001 SOL, so this is far
               above cost. The on-chain cap is a percentage of the denomination, which leaves a
               lot of room on large pools, so it does not mean this fee is reasonable. Consider a
               different relayer, or run your own.
