@@ -34,6 +34,23 @@ id sornado >/dev/null 2>&1 ||
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sornado
 
 install -d -o root -g root -m 0755 /opt/sornadocash /opt/sornadocash/relayer /srv/sornadocash /srv/sornadocash/app
+
+# TCP congestion control: BBR with the fq qdisc, instead of the default cubic. Measured downloading the
+# 5.4 MB proving key from Europe to this Tokyo server: cubic finished 6 of 11 runs at about 0.5 MB/s
+# and stalled near 30 KB/s on the other 5, because cubic treats every lost packet as congestion and
+# the route loses packets. BBR finished 11 of 11 at 0.8 to 1.5 MB/s. The file sorts after the image's
+# 10-bufferbloat.conf, which sets fq_codel; BBR needs fq for pacing on older kernels.
+modprobe tcp_bbr 2>/dev/null || true
+echo tcp_bbr > /etc/modules-load.d/sornadocash-bbr.conf
+cat > /etc/sysctl.d/90-sornadocash-bbr.conf <<'SYSCTL'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+SYSCTL
+sysctl -q -p /etc/sysctl.d/90-sornadocash-bbr.conf
+# default_qdisc only applies to interfaces brought up later; set the live one now.
+dev=$(ip -o route show default | awk '{print $5; exit}')
+[ -n "$dev" ] && tc qdisc replace dev "$dev" root fq
+echo "tcp: $(sysctl -n net.ipv4.tcp_congestion_control), qdisc on ${dev:-?}: $(tc qdisc show dev "$dev" 2>/dev/null | awk 'NR==1{print $2}')"
 install -d -o root -g root -m 0700 /etc/sornadocash
 
 # Host firewall. The image ends INPUT with "REJECT --reject-with icmp-host-prohibited"; rules
