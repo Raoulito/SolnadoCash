@@ -59,12 +59,16 @@ export default function Onboarding({ onDismiss }: OnboardingProps) {
     // There is deliberately no close button and no click-outside handler: this screen is shown
     // once and must be passed, not skipped.
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex bg-black/80 backdrop-blur-sm px-4 py-6 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="onboarding-title"
     >
-      <div className="w-full max-w-lg card p-5 sm:p-7 my-6 animate-rise">
+      {/* G12: centred with auto margins, not by the scrolling overlay. A flex item centred with
+          align-items overflows above the top when it is taller than the screen, where it can never
+          be scrolled to: on a phone the top of this popup was cut off. Auto margins centre it only
+          while it fits, and otherwise it starts at the top and scrolls. */}
+      <div className="w-full max-w-lg card p-5 sm:p-7 m-auto animate-rise">
         {/* Header */}
         <div className="text-center mb-5">
           <span className="grid place-items-center w-14 h-14 mx-auto mb-3 rounded-2xl bg-zinc-800/80 border border-white/10 text-2xl shadow-xl shadow-cyan-950/30">🌀</span>

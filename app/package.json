@@ -9,7 +9,7 @@
     "build": "npm run build:sdk && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "npm run build:sdk && tsc --noEmit",
-    "test": "vitest run && node security/notevault_tabs.mjs 50 && node security/browser_prove.mjs",
+    "test": "vitest run && node security/notevault_tabs.mjs 50 && node security/browser_prove.mjs && node security/modal_reach.mjs && node security/wrong_network_e2e.mjs",
     "lint": "eslint .",
     "test:security": "vitest run --config vitest.security.config.ts"
   },

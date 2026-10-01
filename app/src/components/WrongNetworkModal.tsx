@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { ALLOWED_CLUSTER } from '../utils/clusterGate';
 
 interface Props {
@@ -20,15 +21,20 @@ interface Props {
  * warning users learn to click through.
  */
 export default function WrongNetworkModal({ message, onRetry, retrying = false }: Props) {
-  return (
+  // G12: rendered into document.body. It is used inside the deposit card, whose entry animation leaves
+  // a transform on it, and a transformed ancestor is the containing block of every position:fixed
+  // descendant: the overlay was confined to the card instead of covering the screen.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex overflow-y-auto p-4 bg-black/70 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="wrong-network-title"
       data-testid="wrong-network-modal"
     >
-      <div className="w-full max-w-md bg-zinc-900 border border-amber-500/30 rounded-2xl p-6 space-y-4">
+      {/* G12: centred with auto margins inside a scrolling overlay, so on a short screen the whole
+          card, its button included, can be scrolled to. */}
+      <div className="w-full max-w-md bg-zinc-900 border border-amber-500/30 rounded-2xl p-6 space-y-4 m-auto">
         <div className="flex items-start gap-3">
           <span className="text-amber-400 text-xl shrink-0" aria-hidden="true">
             &#9888;
@@ -70,6 +76,7 @@ export default function WrongNetworkModal({ message, onRetry, retrying = false }
           {retrying ? 'Checking…' : 'I switched — check again'}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
