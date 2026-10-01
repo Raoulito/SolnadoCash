@@ -36,7 +36,7 @@ Link between Alice and Bob: none.
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Proof system | Groth16 | Compact proofs (192 bytes), fast on-chain verification via Solana's native BN254 syscall |
+| Proof system | Groth16 | Compact proofs (256 bytes: two G1 points and one G2 point, uncompressed), fast on-chain verification via Solana's native BN254 syscall |
 | Curve | BN254 | Native Solana support, optimal proof size |
 | Hash function | Poseidon | ~100x fewer constraints than SHA-256 inside ZK circuits |
 | Merkle tree depth | 20 | Supports up to 1,048,576 deposits per pool |
